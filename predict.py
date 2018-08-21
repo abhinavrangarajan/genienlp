@@ -177,8 +177,8 @@ def get_args():
     parser.add_argument('--tasks', default=['almond', 'wikisql', 'woz.en', 'cnn_dailymail', 'iwslt.en.de', 'zre', 'srl', 'squad', 'sst', 'multinli.in.out', 'schema'], nargs='+')
     parser.add_argument('--gpus', type=int, help='gpus to use', required=True)
     parser.add_argument('--seed', default=123, type=int, help='Random seed.')
-    parser.add_argument('--data', default='/decaNLP/.data/', type=str, help='where to load data from.')
-    parser.add_argument('--embeddings', default='/decaNLP/.embeddings', type=str, help='where to save embeddings.')
+    parser.add_argument('--data', default='./decaNLP/.data/', type=str, help='where to load data from.')
+    parser.add_argument('--embeddings', default='./decaNLP/.embeddings', type=str, help='where to save embeddings.')
     parser.add_argument('--checkpoint_name')
 
     args = parser.parse_args()

@@ -257,13 +257,19 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(args.seed)
 
     print(f'Loading from {args.best_checkpoint}')
-    save_dict = torch.load(args.best_checkpoint)
+    if torch.cuda.is_available():
+        save_dict = torch.load(args.best_checkpoint)
+    else:
+        save_dict = torch.load(args.best_checkpoint, map_location='cpu')
     field = save_dict['field']
+    actual_field = torchtext.data.SimpleReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+    for attr in ['decoder_itos', 'decoder_stoi', 'decoder_to_vocab', 'vocab', 'vocab_to_decoder', 'vocab_cls']:
+        setattr(actual_field, attr, getattr(field, attr))
     print(f'Initializing Model')
     Model = getattr(models, args.model) 
-    model = Model(field, args)
+    model = Model(actual_field, args)
     model.load_state_dict(save_dict['model_state_dict'])
-    field, splits = prepare_data(args, field)
-    model.set_embeddings(field.vocab.vectors)
+    actual_field, splits = prepare_data(args, actual_field)
+    model.set_embeddings(actual_field.vocab.vectors)
 
-    run(args, field, splits, model)
+    run(args, actual_field, splits, model)

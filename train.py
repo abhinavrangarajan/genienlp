@@ -42,9 +42,6 @@ def initialize_logger(args, rank='main'):
 def log(rank='main'):
     return logging.getLogger(f'process_{rank}')
 
-# torch can't pickle lambda functions so we define one!
-# def tokenizer(s):
-#     return s.split()
 
 def prepare_data(args, field, logger):
 
@@ -55,9 +52,8 @@ def prepare_data(args, field, logger):
         FIELD = field
 
     train_sets, val_sets, vocab_sets = [], [], []
-    #setattr(FIELD, 'tokenize', lambda s: s.split())
-    for task in args.train_tasks:
 
+    for task in args.train_tasks:
         logger.info(f'Loading {task}')
         kwargs = {'test': None}
         kwargs['subsample'] = args.subsample
@@ -96,6 +92,26 @@ def prepare_data(args, field, logger):
         vocab_sets = (train_sets + val_sets) if len(vocab_sets) == 0 else vocab_sets
         FIELD.build_vocab(*vocab_sets, max_size=args.max_effective_vocab, vectors=vectors)
 
+    if args.add_extra_vocab_bool:
+        task_field = torchtext.data.SimpleReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+        kwargs = {'test': None}
+        kwargs['subsample'] = args.subsample
+        kwargs['validation'] = None
+        train_split = get_splits(args, task, task_field, **kwargs)[0]
+        kwargs = {'test': None}
+        kwargs['subsample'] = args.subsample
+        kwargs['train'] = None
+        val_split = get_splits(args, task, task_field, **kwargs)[0]
+        logger.info(f'Appending vocabulary')
+        char_vectors = torchtext.vocab.CharNGram(cache=args.embeddings)
+        glove_vectors = torchtext.vocab.GloVe(cache=args.embeddings)
+        vectors = [char_vectors, glove_vectors]
+        vocab_sets = ([train_split] + [val_split])
+        task_field.build_vocab(*vocab_sets, max_size=args.max_effective_vocab, vectors=vectors)
+        FIELD.append_vocab(task_field)
+
+
+
     FIELD.decoder_itos = FIELD.vocab.itos[:args.max_generative_vocab]
     FIELD.decoder_stoi = {word: idx for idx, word in enumerate(FIELD.decoder_itos)} 
     FIELD.decoder_to_vocab = {idx: FIELD.vocab.stoi[word] for idx, word in enumerate(FIELD.decoder_itos)}
@@ -103,7 +119,7 @@ def prepare_data(args, field, logger):
 
     logger.info(f'Vocabulary has {len(FIELD.vocab)} tokens')
     logger.info(f'The first 500 tokens:')
-    print(FIELD.vocab.itos[:500])
+    print(FIELD.vocab.itos[-100:])
 
     logger.info('Preprocessing training data')
     preprocess_examples(args, args.train_tasks, train_sets, FIELD, logger, train=True) 
@@ -301,7 +317,10 @@ def run(args, run_args, rank=0, world_size=1):
 
     if save_dict is not None:
         logger.info(f'Loading model from {os.path.join(args.save, args.load)}')
-        save_dict = torch.load(os.path.join(args.save, args.load))
+        if torch.cuda.is_available():
+            save_dict = torch.load(os.path.join(args.save, args.load))
+        else:
+            save_dict = torch.load(os.path.join(args.save, args.load), map_location='cpu')
         model.load_state_dict(save_dict['model_state_dict'])
         if args.resume:
             logger.info(f'Resuming Training from {os.path.splitext(args.load)[0]}_rank_{rank}_optim.pth')
@@ -353,12 +372,21 @@ def main():
     field, save_dict = None, None
     if args.load is not None:
         logger.info(f'Loading field from {os.path.join(args.save, args.load)}')
-        save_dict = torch.load(os.path.join(args.save, args.load))
+        if torch.cuda.is_available():
+            save_dict = torch.load(os.path.join(args.save, args.load))
+        else:
+            save_dict = torch.load(os.path.join(args.save, args.load), map_location='cpu')
         field = save_dict['field']
+        actual_field = torchtext.data.SimpleReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>',
+                                                            lower=args.lower, include_lengths=True)
+        for attr in ['decoder_itos', 'decoder_stoi', 'decoder_to_vocab', 'vocab', 'vocab_to_decoder', 'vocab_cls']:
+            setattr(actual_field, attr, getattr(field, attr))
+    else:
+        actual_field = field
 
-    field, train_sets, val_sets = prepare_data(args, field, logger)
+    actual_field, train_sets, val_sets = prepare_data(args, actual_field, logger)
 
-    run_args = (field, train_sets, val_sets, save_dict)
+    run_args = (actual_field, train_sets, val_sets, save_dict)
     if len(args.gpus) > 1:
         logger.info(f'Multiprocessing')
         mp = Multiprocess(run, args)

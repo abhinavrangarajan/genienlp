@@ -27,6 +27,7 @@ def parse():
     parser.add_argument('--data', default='./decaNLP/.data/', type=str, help='where to load data from.')
     parser.add_argument('--save', default='./decaNLP/results', type=str, help='where to save results.')
     parser.add_argument('--embeddings', default='./decaNLP/.embeddings', type=str, help='where to save embeddings.')
+    parser.add_argument('--reverse_task', action='store_true', dest='reverse_task_bool', help='whether to translate english to code or the other way around')
 
     parser.add_argument('--train_tasks', nargs='+', type=str, help='tasks to use for training', required=True)
     parser.add_argument('--train_iterations', nargs='+', type=int, help='number of iterations to focus on each task')
@@ -52,6 +53,7 @@ def parse():
     parser.add_argument('--max_answer_length', default=50, type=int, help='maximum length of answers during training and validation')
     parser.add_argument('--subsample', default=20000000, type=int, help='subsample the datasets')
     parser.add_argument('--preserve_case', action='store_false', dest='lower', help='whether to preserve casing for all text')
+    parser.add_argument('--add_extra_vocab', action='store_true', dest='add_extra_vocab_bool', help='when using pretrained model on new task expand the vocabulary')
 
     parser.add_argument('--model', type=str, default='MultitaskQuestionAnsweringNetwork', help='which model to import')
     parser.add_argument('--dimension', default=200, type=int, help='output dimensions for all layers')

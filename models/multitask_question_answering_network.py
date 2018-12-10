@@ -147,7 +147,6 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         elif self.args.elmo:
             context_list = []
             for b in range(context.size(0)):
-                #FIXME
                 lc = [self.field.decoder_itos[i] if i < self.args.max_generative_vocab else self.field.decoder_itos[0] for i in context[b, :]]
                 if lc[0] == self.field.decoder_itos[2]:
                     lc[0] = '<S>'

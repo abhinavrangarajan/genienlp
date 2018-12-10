@@ -83,6 +83,7 @@ def run(args, field, val_sets, model):
     print(f'{args.model} has {num_param:,} parameters')
     model.to(device)
 
+    decaScore = []
     model.eval()
     with torch.no_grad():
         for task, it in iters:
@@ -106,8 +107,12 @@ def run(args, field, val_sets, model):
                 with open(results_file_name) as results_file:
                   for l in results_file:
                       print(l)
-                if not 'schema' in task and not args.overwrite_predictions and args.silent:
+                if not args.overwrite_predictions and args.silent:
+                    with open(results_file_name) as results_file:
+                          metrics = json.loads(results_file.readlines()[0])
+                          decaScore.append(metrics[args.task_to_metric[task]])
                     continue
+
             for x in [prediction_file_name, answer_file_name, results_file_name]:
                 os.makedirs(os.path.dirname(x), exist_ok=True)
     
@@ -135,19 +140,20 @@ def run(args, field, val_sets, model):
                                 ids.append(it.dataset.q_ids[int(batch.squad_id[i])])
                             prediction_file.write(json.dumps(pp) + '\n')
                             predictions.append(pp) 
+                if 'sql' in task:
+                    with open(ids_file_name, 'w') as id_file:
+                        for i in ids:
+                            id_file.write(json.dumps(i) + '\n')
+                if 'squad' in task:
+                    with open(ids_file_name, 'w') as id_file:
+                        for i in ids:
+                            id_file.write(i + '\n')
             else:
                 with open(prediction_file_name) as prediction_file:
                     predictions = [x.strip() for x in prediction_file.readlines()] 
-    
-            if 'sql' in task:
-                with open(ids_file_name, 'w') as id_file:
-                    for i in ids:
-                        id_file.write(json.dumps(i) + '\n')
-
-            if 'squad' in task:
-                with open(ids_file_name, 'w') as id_file:
-                    for i in ids:
-                        id_file.write(i + '\n')
+                if 'sql' in task or 'squad' in task:
+                    with open(ids_file_name) as id_file:
+                        ids = [int(x.strip()) for x in id_file.readlines()]
    
             def from_all_answers(an):
                 return [it.dataset.all_answers[sid] for sid in an.tolist()] 
@@ -197,6 +203,14 @@ def run(args, field, val_sets, model):
                     for i, (p, a) in enumerate(zip(predictions, answers)):
                         print(f'Prediction {i+1}: {p}\nAnswer {i+1}: {a}\n')
                 print(metrics)
+                decaScore.append(metrics[args.task_to_metric[task]])
+    print(f'Evaluated Tasks:\n')
+    for i, (task, _) in enumerate(iters):
+        print(f'{task}: {decaScore[i]}')
+    print(f'-------------------')
+    print(f'DecaScore:  {sum(decaScore)}\n')
+    
+    print(f'\nSummary: | {sum(decaScore)} | {" | ".join([str(x) for x in decaScore])} |\n')
 
 
 def get_args():
@@ -226,11 +240,11 @@ def get_args():
                     'transformer_layers', 'rnn_layers', 'transformer_hidden', 
                     'dimension', 'load', 'max_val_context_length', 'val_batch_size', 
                     'transformer_heads', 'max_output_length', 'max_generative_vocab', 
-                    'lower', 'cove', 'intermediate_cove']
+                    'lower', 'cove', 'intermediate_cove', 'elmo']
         for r in retrieve:
             if r in config:
-                setattr(args, r,  config[r])
-            elif 'cove' in r:
+                setattr(args, r, config[r])
+            elif 'cove' in r or 'elmo' in r:
                 setattr(args, r, False)
             else:
                 setattr(args, r, None)

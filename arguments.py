@@ -90,7 +90,9 @@ def parse():
 
 
 
+
     args = parser.parse_args()
+    args.tune = False
     if args.model is None:
         args.model = 'mcqa'
     if args.val_tasks is None:

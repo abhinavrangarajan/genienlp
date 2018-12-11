@@ -14,6 +14,13 @@ from metrics import compute_metrics
 import models
 from text.torchtext.data.utils import get_tokenizer
 
+import matplotlib.pyplot as plt
+from scipy import interp
+from sklearn.utils.fixes import signature
+
+
+from sklearn.metrics import *
+
 
 
 def get_all_splits(args, new_vocab):
@@ -85,132 +92,325 @@ def run(args, field, val_sets, model):
 
     decaScore = []
     model.eval()
-    with torch.no_grad():
-        for task, it in iters:
-            print(task)
-            if args.eval_dir:
-                prediction_file_name = os.path.join(args.eval_dir, os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.txt'))
-                answer_file_name = os.path.join(args.eval_dir, os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.gold.txt'))
-                results_file_name = answer_file_name.replace('gold', 'results')
-            else:
-                prediction_file_name = os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.txt')
-                answer_file_name = os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.gold.txt')
-                results_file_name = answer_file_name.replace('gold', 'results')
-            if 'sql' in task or 'squad' in task:
-                ids_file_name = answer_file_name.replace('gold', 'ids')
-            if os.path.exists(prediction_file_name):
-                print('** ', prediction_file_name, ' already exists -- this is where predictions are stored **')
-            if os.path.exists(answer_file_name):
-                print('** ', answer_file_name, ' already exists -- this is where ground truth answers are stored **')
-            if os.path.exists(results_file_name):
-                print('** ', results_file_name, ' already exists -- this is where metrics are stored **')
-                with open(results_file_name) as results_file:
-                  for l in results_file:
-                      print(l)
-                if not args.overwrite_predictions and args.silent:
-                    with open(results_file_name) as results_file:
-                          metrics = json.loads(results_file.readlines()[0])
-                          decaScore.append(metrics[args.task_to_metric[task]])
-                    continue
+    thresholds = args.thresholds
 
-            for x in [prediction_file_name, answer_file_name, results_file_name]:
-                os.makedirs(os.path.dirname(x), exist_ok=True)
-    
-            if not os.path.exists(prediction_file_name) or args.overwrite_predictions:
-                print('** overwriting old results with new predictions **')
-                with open(prediction_file_name, 'w') as prediction_file:
-                    predictions = []
-                    ids = []
-                    for batch_idx, batch in enumerate(it):
-                        _, p = model(batch, iteration=1)
+    if args.tune:
+        # for threshold in thresholds:
+        # best_metric = 0
+        # best_threshold = 0
+        with torch.no_grad():
+            for task, it in iters:
+                print(task)
 
+
+                # predictions *****
+                threshold = 0.5
+                scores = []
+                predictions = []
+                ids = []
+                for batch_idx, batch in enumerate(it):
+                    if args.tune:
+                        _, score = model(batch, iteration=1)
+                        score = torch.mean(score, dim=1)
+                        for i, ss in enumerate(score):
+                            scores.append(ss)
+                            if ss > threshold:
+                                pp = "positive"
+                            else:
+                                pp = "negative"
+                            predictions.append(pp)
+
+
+                # answers *****
+                def from_all_answers(an):
+                    return [it.dataset.all_answers[sid] for sid in an.tolist()]
+
+                answers = []
+                for batch_idx, batch in enumerate(it):
+                    if hasattr(batch, 'wikisql_id'):
+                        a = from_all_answers(batch.wikisql_id.data.cpu())
+                    elif hasattr(batch, 'squad_id'):
+                        a = from_all_answers(batch.squad_id.data.cpu())
+                    elif hasattr(batch, 'woz_id'):
+                        a = from_all_answers(batch.woz_id.data.cpu())
+                    else:
                         if task == 'almond':
                             setattr(field, 'use_revtok', False)
                             setattr(field, 'tokenize', tokenizer)
-                            p = field.reverse_almond(p)
+                            a = field.reverse_almond(batch.answer.data)
                             setattr(field, 'use_revtok', True)
-                            setattr(field, 'tokenize', get_tokenizer('revtok'))
+                            setattr(field, 'tokenize', 'revtok')
                         else:
-                            p = field.reverse(p)
+                            a = field.reverse(batch.answer.data)
+                    for aa in a:
+                        if aa == 'positive':
+                            aa = 1
+                        else:
+                            aa = 0
+                        answers.append(aa)
 
-                        for i, pp in enumerate(p):
-                            if 'sql' in task:
-                                ids.append(int(batch.wikisql_id[i]))
-                            if 'squad' in task:
-                                ids.append(it.dataset.q_ids[int(batch.squad_id[i])])
-                            prediction_file.write(json.dumps(pp) + '\n')
-                            predictions.append(pp) 
-                if 'sql' in task:
-                    with open(ids_file_name, 'w') as id_file:
-                        for i in ids:
-                            id_file.write(json.dumps(i) + '\n')
-                if 'squad' in task:
-                    with open(ids_file_name, 'w') as id_file:
-                        for i in ids:
-                            id_file.write(i + '\n')
-            else:
-                with open(prediction_file_name) as prediction_file:
-                    predictions = [x.strip() for x in prediction_file.readlines()] 
+
+
+                ans_sorted, score_sorted = list(zip(*sorted(zip(answers, scores), key= lambda x: x[1], reverse=True)))
+                print(f'-------------------')
+                print(f'answers:  {ans_sorted}\n')
+                print(f'scores: {score_sorted}\n')
+                print(f'-------------------')
+
+
+                # results *****
+                # metrics, answers = compute_metrics(predictions, answers,
+                #                                    bleu='iwslt' in task or 'multi30k' in task or 'almond' in task,
+                #                                    dialogue='woz' in task,
+                #                                    rouge='cnn' in task, logical_form='sql' in task,
+                #                                    corpus_f1='zre' in task,
+                #                                    func_accuracy='almond' in task and not args.reverse_task_bool,
+                #                                    dev_accuracy='almond' in task and not args.reverse_task_bool,
+                #                                    args=args)
+
+
+                # precision_recall_curve
+
+                precision, recall, thresholds = precision_recall_curve(answers, scores)
+                area_under_precision_recall = average_precision_score(answers, scores)
+
+                # if metrics > best_metric:
+                #     best_metric = metrics
+                #     best_threshold = threshold
+
+
+                print(f'-------------------')
+                print(f'precision:  {precision}\n')
+                print(f'recall:  {recall}\n')
+                print(f'thresholds:  {thresholds}\n')
+                print(f'area_under_precision_recall:  {area_under_precision_recall}\n')
+                print(f'-------------------')
+
+                fig1 = plt.figure()
+                average_precision = average_precision_score(answers, scores)
+                step_kwargs = ({'step': 'post'}
+                               if 'step' in signature(plt.fill_between).parameters
+                               else {})
+                plt.step(recall, precision, color='b', alpha=0.2,
+                         where='post')
+                plt.fill_between(recall, precision, alpha=0.2, color='b', **step_kwargs)
+
+                plt.xlabel('Recall')
+                plt.ylabel('Precision')
+                plt.ylim([0.0, 1.05])
+                plt.xlim([0.0, 1.0])
+                plt.title('2-class Precision-Recall curve: AP={0:0.2f}'.format(average_precision))
+                fig1.savefig(os.path.join(args.path, 'precision_recall.png'))
+
+
+
+
+
+
+
+
+                fpr, tpr, thresholds = roc_curve(answers, scores)
+                area_under_roc = roc_auc_score(answers, scores)
+
+                print(f'-------------------')
+                print(f'false positive rate:  {fpr}\n')
+                print(f'true positive rate:  {tpr}\n')
+                print(f'thresholds:  {thresholds}\n')
+                print(f'area_under_roc:  {area_under_roc}\n')
+                print(f'-------------------')
+
+                # def perf_measure(y_actual, y_hat, threshold):
+                #     TP = 0
+                #     FP = 0
+                #     TN = 0
+                #     FN = 0
+                #
+                #     for i in range(len(y_hat)):
+                #         if y_actual[i] == y_hat[i] == 1:
+                #             TP += 1
+                #         if y_hat[i] == 1 and y_actual[i] != y_hat[i]:
+                #             FP += 1
+                #         if y_actual[i] == y_hat[i] == 0:
+                #             TN += 1
+                #         if y_hat[i] == 0 and y_actual[i] != y_hat[i]:
+                #             FN += 1
+                #
+                # return (TP, FP, TN, FN)
+                #
+                # perf_measure(answers, scores)
+
+                ############################################################
+                fig2 = plt.figure()
+                tprs = []
+                aucs = []
+                mean_fpr = np.linspace(0, 1, 100)
+                i = 0
+
+                # Compute ROC curve and area the curve
+                tprs.append(interp(mean_fpr, fpr, tpr))
+                tprs[-1][0] = 0.0
+                roc_auc = auc(fpr, tpr)
+                aucs.append(roc_auc)
+                plt.plot(fpr, tpr, lw=1, alpha=0.3,
+                         label='ROC fold %d (AUC = %0.2f)' % (i, roc_auc))
+
+                plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
+                         label='Chance', alpha=.8)
+
+                mean_tpr = np.mean(tprs, axis=0)
+                mean_tpr[-1] = 1.0
+                mean_auc = auc(mean_fpr, mean_tpr)
+                std_auc = np.std(aucs)
+                plt.plot(mean_fpr, mean_tpr, color='b',
+                         label=r'Mean ROC (AUC = %0.2f $\pm$ %0.2f)' % (mean_auc, std_auc),
+                         lw=2, alpha=.8)
+
+                std_tpr = np.std(tprs, axis=0)
+                tprs_upper = np.minimum(mean_tpr + std_tpr, 1)
+                tprs_lower = np.maximum(mean_tpr - std_tpr, 0)
+                plt.fill_between(mean_fpr, tprs_lower, tprs_upper, color='grey', alpha=.2,
+                                 label=r'$\pm$ 1 std. dev.')
+
+                plt.xlim([-0.05, 1.05])
+                plt.ylim([-0.05, 1.05])
+                plt.xlabel('False Positive Rate')
+                plt.ylabel('True Positive Rate')
+                plt.title('Receiver operating characteristic example')
+                plt.legend(loc="lower right")
+                # plt.show()
+                fig2.savefig(os.path.join(args.path, 'roc.png'))
+                print('plot complete')
+                ############################################################
+
+
+
+    else:
+        with torch.no_grad():
+            for task, it in iters:
+                print(task)
+                if args.eval_dir:
+                    prediction_file_name = os.path.join(args.eval_dir, os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.txt'))
+                    answer_file_name = os.path.join(args.eval_dir, os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.gold.txt'))
+                    results_file_name = answer_file_name.replace('gold', 'results')
+                else:
+                    prediction_file_name = os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.txt')
+                    answer_file_name = os.path.join(os.path.splitext(args.best_checkpoint)[0], args.evaluate, task + '.gold.txt')
+                    results_file_name = answer_file_name.replace('gold', 'results')
                 if 'sql' in task or 'squad' in task:
-                    with open(ids_file_name) as id_file:
-                        ids = [int(x.strip()) for x in id_file.readlines()]
-   
-            def from_all_answers(an):
-                return [it.dataset.all_answers[sid] for sid in an.tolist()] 
-    
-            if not os.path.exists(answer_file_name):
-                with open(answer_file_name, 'w') as answer_file:
-                    answers = []
-                    for batch_idx, batch in enumerate(it):
-                        if hasattr(batch, 'wikisql_id'):
-                            a = from_all_answers(batch.wikisql_id.data.cpu())
-                        elif hasattr(batch, 'squad_id'):
-                            a = from_all_answers(batch.squad_id.data.cpu())
-                        elif hasattr(batch, 'woz_id'):
-                            a = from_all_answers(batch.woz_id.data.cpu())
-                        else:
+                    ids_file_name = answer_file_name.replace('gold', 'ids')
+                if os.path.exists(prediction_file_name):
+                    print('** ', prediction_file_name, ' already exists -- this is where predictions are stored **')
+                if os.path.exists(answer_file_name):
+                    print('** ', answer_file_name, ' already exists -- this is where ground truth answers are stored **')
+                if os.path.exists(results_file_name):
+                    print('** ', results_file_name, ' already exists -- this is where metrics are stored **')
+                    with open(results_file_name) as results_file:
+                      for l in results_file:
+                          print(l)
+                    if not args.overwrite_predictions and args.silent:
+                        with open(results_file_name) as results_file:
+                              metrics = json.loads(results_file.readlines()[0])
+                              decaScore.append(metrics[args.task_to_metric[task]])
+                        continue
+
+                for x in [prediction_file_name, answer_file_name, results_file_name]:
+                    os.makedirs(os.path.dirname(x), exist_ok=True)
+
+                if not os.path.exists(prediction_file_name) or args.overwrite_predictions:
+                    print('** overwriting old results with new predictions **')
+                    with open(prediction_file_name, 'w') as prediction_file:
+                        predictions = []
+                        ids = []
+                        for batch_idx, batch in enumerate(it):
+                            _, p = model(batch, iteration=1)
+
                             if task == 'almond':
                                 setattr(field, 'use_revtok', False)
                                 setattr(field, 'tokenize', tokenizer)
-                                a = field.reverse_almond(batch.answer.data)
+                                p = field.reverse_almond(p)
                                 setattr(field, 'use_revtok', True)
-                                setattr(field, 'tokenize', 'revtok')
+                                setattr(field, 'tokenize', get_tokenizer('revtok'))
                             else:
-                                a = field.reverse(batch.answer.data)
-                        for aa in a:
-                            answers.append(aa) 
-                            answer_file.write(json.dumps(aa) + '\n')
-            else:
-                with open(answer_file_name) as answer_file:
-                    answers = [json.loads(x.strip()) for x in answer_file.readlines()] 
-    
-            if len(answers) > 0:
-                if not os.path.exists(results_file_name) or args.overwrite_predictions:
-                    metrics, answers = compute_metrics(predictions, answers,
-                                           bleu='iwslt' in task or 'multi30k' in task or 'almond' in task,
-                                           dialogue='woz' in task,
-                                           rouge='cnn' in task, logical_form='sql' in task, corpus_f1='zre' in task,
-                                           func_accuracy='almond' in task and not args.reverse_task_bool,
-                                           dev_accuracy='almond' in task and not args.reverse_task_bool,
-                                           args=args)
-                    with open(results_file_name, 'w') as results_file:
-                        results_file.write(json.dumps(metrics) + '\n')
+                                p = field.reverse(p)
+
+                            for i, pp in enumerate(p):
+                                if 'sql' in task:
+                                    ids.append(int(batch.wikisql_id[i]))
+                                if 'squad' in task:
+                                    ids.append(it.dataset.q_ids[int(batch.squad_id[i])])
+                                prediction_file.write(json.dumps(pp) + '\n')
+                                predictions.append(pp)
+                    if 'sql' in task:
+                        with open(ids_file_name, 'w') as id_file:
+                            for i in ids:
+                                id_file.write(json.dumps(i) + '\n')
+                    if 'squad' in task:
+                        with open(ids_file_name, 'w') as id_file:
+                            for i in ids:
+                                id_file.write(i + '\n')
                 else:
-                    with open(results_file_name) as results_file:
-                        metrics = json.loads(results_file.readlines()[0])
-    
-                if not args.silent:
-                    for i, (p, a) in enumerate(zip(predictions, answers)):
-                        print(f'Prediction {i+1}: {p}\nAnswer {i+1}: {a}\n')
-                print(metrics)
-                decaScore.append(metrics[args.task_to_metric[task]])
-    print(f'Evaluated Tasks:\n')
-    for i, (task, _) in enumerate(iters):
-        print(f'{task}: {decaScore[i]}')
-    print(f'-------------------')
-    print(f'DecaScore:  {sum(decaScore)}\n')
-    
-    print(f'\nSummary: | {sum(decaScore)} | {" | ".join([str(x) for x in decaScore])} |\n')
+                    with open(prediction_file_name) as prediction_file:
+                        predictions = [x.strip() for x in prediction_file.readlines()]
+                    if 'sql' in task or 'squad' in task:
+                        with open(ids_file_name) as id_file:
+                            ids = [int(x.strip()) for x in id_file.readlines()]
+
+                def from_all_answers(an):
+                    return [it.dataset.all_answers[sid] for sid in an.tolist()]
+
+                if not os.path.exists(answer_file_name):
+                    with open(answer_file_name, 'w') as answer_file:
+                        answers = []
+                        for batch_idx, batch in enumerate(it):
+                            if hasattr(batch, 'wikisql_id'):
+                                a = from_all_answers(batch.wikisql_id.data.cpu())
+                            elif hasattr(batch, 'squad_id'):
+                                a = from_all_answers(batch.squad_id.data.cpu())
+                            elif hasattr(batch, 'woz_id'):
+                                a = from_all_answers(batch.woz_id.data.cpu())
+                            else:
+                                if task == 'almond':
+                                    setattr(field, 'use_revtok', False)
+                                    setattr(field, 'tokenize', tokenizer)
+                                    a = field.reverse_almond(batch.answer.data)
+                                    setattr(field, 'use_revtok', True)
+                                    setattr(field, 'tokenize', 'revtok')
+                                else:
+                                    a = field.reverse(batch.answer.data)
+                            for aa in a:
+                                answers.append(aa)
+                                answer_file.write(json.dumps(aa) + '\n')
+                else:
+                    with open(answer_file_name) as answer_file:
+                        answers = [json.loads(x.strip()) for x in answer_file.readlines()]
+
+                if len(answers) > 0:
+                    if not os.path.exists(results_file_name) or args.overwrite_predictions:
+                        metrics, answers = compute_metrics(predictions, answers,
+                                               bleu='iwslt' in task or 'multi30k' in task or 'almond' in task,
+                                               dialogue='woz' in task,
+                                               rouge='cnn' in task, logical_form='sql' in task, corpus_f1='zre' in task,
+                                               func_accuracy='almond' in task and not args.reverse_task_bool,
+                                               dev_accuracy='almond' in task and not args.reverse_task_bool,
+                                               args=args)
+                        with open(results_file_name, 'w') as results_file:
+                            results_file.write(json.dumps(metrics) + '\n')
+                    else:
+                        with open(results_file_name) as results_file:
+                            metrics = json.loads(results_file.readlines()[0])
+
+                    if not args.silent:
+                        for i, (p, a) in enumerate(zip(predictions, answers)):
+                            print(f'Prediction {i+1}: {p}\nAnswer {i+1}: {a}\n')
+                    print(metrics)
+                    decaScore.append(metrics[args.task_to_metric[task]])
+        print(f'Evaluated Tasks:\n')
+        for i, (task, _) in enumerate(iters):
+            print(f'{task}: {decaScore[i]}')
+        print(f'-------------------')
+        print(f'DecaScore:  {sum(decaScore)}\n')
+
+        print(f'\nSummary: | {sum(decaScore)} | {" | ".join([str(x) for x in decaScore])} |\n')
 
 
 def get_args():
@@ -228,9 +428,11 @@ def get_args():
     parser.add_argument('--overwrite_predictions', action='store_true', help='whether to overwrite previously written predictions')
     parser.add_argument('--silent', action='store_true', help='whether to print predictions to stdout')
 
-    parser.add_argument('--skip_cache', action='store_true', dest='skip_cache_bool', help='whether use exisiting cached splits or generate new ones')
+    parser.add_argument('--skip_cache', action='store_true', dest='skip_cache_bool', help='whether to use exisiting cached splits or generate new ones')
     parser.add_argument('--reverse_task', action='store_true', dest='reverse_task_bool', help='whether to translate english to code or the other way around')
     parser.add_argument('--eval_dir', type=str, default=None, help='use this directory to store eval results')
+    parser.add_argument('--tune', action='store_true', help='whether to tune or predict')
+    parser.add_argument('--thresholds', default=[0], nargs='+', type=int, help='a list of thresholds that can be used to tune the model')
 
     args = parser.parse_args()
 

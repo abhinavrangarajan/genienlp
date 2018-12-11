@@ -229,7 +229,35 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 loss = F.nll_loss(probs.log(), targets)
             return loss, None
         else:
-            return None, self.greedy(self_attended_context, final_context, final_question,
+
+            if self.args.tune:
+                # answer_padding = (answer_indices.data == pad_idx)[:, :-1]
+                # answer_embedded = self.decoder_embeddings(answer)
+                # self_attended_decoded = self.self_attentive_decoder(answer_embedded[:, :-1].contiguous(),
+                #                                                     self_attended_context,
+                #                                                     context_padding=context_padding,
+                #                                                     answer_padding=answer_padding,
+                #                                                     positional_encodings=True)
+                # decoder_outputs = self.dual_ptr_rnn_decoder(self_attended_decoded,
+                #                                             final_context, final_question, hidden=context_rnn_state)
+                # rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
+                #
+                # probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                #                    context_attention, question_attention,
+                #                    context_indices, question_indices,
+                #                    oov_to_limited_idx)
+                #
+                # probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
+                #
+                # mean_max_probs = torch.mean(probs.max(-1)[0])
+                # return None, mean_max_probs
+
+                return None, self.scoring(self_attended_context, final_context, final_question,
+                                     context_indices, question_indices,
+                                     oov_to_limited_idx, rnn_state=context_rnn_state).data
+
+            else:
+                return None, self.greedy(self_attended_context, final_context, final_question,
                                      context_indices, question_indices,
                                      oov_to_limited_idx, rnn_state=context_rnn_state).data
 
@@ -304,7 +332,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_indices, question_indices,
-                               oov_to_limited_idx)
+                               oov_to_limited_idx)  # size  (29, 1, vocab_size)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)
             eos_yet = eos_yet | (preds == self.field.decoder_stoi['<eos>'])
@@ -312,6 +340,53 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if eos_yet.all():
                 break
         return outs
+
+
+    def scoring(self, self_attended_context, context, question, context_indices, question_indices, oov_to_limited_idx, rnn_state=None):
+        B, TC, C = context.size()
+        T = self.args.max_output_length
+        scores = context.new_full((B, T), 0.5, dtype=torch.float)
+        outs = context.new_full((B, T), self.field.decoder_stoi['<pad>'], dtype=torch.long)
+        hiddens = [self_attended_context[0].new_zeros((B, T, C))
+                   for l in range(len(self.self_attentive_decoder.layers) + 1)]
+        hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])
+        eos_yet = context.new_zeros((B,)).byte()
+
+        rnn_output, context_alignment, question_alignment = None, None, None
+        for t in range(T):
+            if t == 0:
+                embedding = self.decoder_embeddings(
+                    self_attended_context[-1].new_full((B, 1), self.field.vocab.stoi['<init>'], dtype=torch.long),
+                    [1] * B)
+            else:
+                embedding = self.decoder_embeddings(outs[:, t - 1].unsqueeze(1), [1] * B)
+            hiddens[0][:, t] = hiddens[0][:, t] + (math.sqrt(self.self_attentive_decoder.d_model) * embedding).squeeze(1)
+            for l in range(len(self.self_attentive_decoder.layers)):
+                hiddens[l + 1][:, t] = self.self_attentive_decoder.layers[l].feedforward(
+                    self.self_attentive_decoder.layers[l].attention(
+                        self.self_attentive_decoder.layers[l].selfattn(hiddens[l][:, t], hiddens[l][:, :t + 1],
+                                                                       hiddens[l][:, :t + 1])
+                        , self_attended_context[l], self_attended_context[l]))
+            decoder_outputs = self.dual_ptr_rnn_decoder(hiddens[-1][:, t].unsqueeze(1),
+                                                        context, question,
+                                                        context_alignment=context_alignment,
+                                                        question_alignment=question_alignment,
+                                                        hidden=rnn_state, output=rnn_output)
+            rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
+            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                               context_attention, question_attention,
+                               context_indices, question_indices,
+                               oov_to_limited_idx)  # size  (29, 1, vocab_size)
+            pred_probs, preds = probs.max(-1)
+            preds = preds.squeeze(1)
+            pred_probs = pred_probs.squeeze(1)
+            eos_yet = eos_yet | (preds == self.field.decoder_stoi['<eos>'])
+            outs[:, t] = preds.cpu().apply_(self.map_to_full)
+            scores[:, t] = pred_probs.cpu()
+            if eos_yet.all():
+                break
+
+        return scores
 
 
 class DualPtrRNNDecoder(nn.Module):

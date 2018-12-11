@@ -230,27 +230,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return loss, None
         else:
 
-            if self.args.tune:
-                # answer_padding = (answer_indices.data == pad_idx)[:, :-1]
-                # answer_embedded = self.decoder_embeddings(answer)
-                # self_attended_decoded = self.self_attentive_decoder(answer_embedded[:, :-1].contiguous(),
-                #                                                     self_attended_context,
-                #                                                     context_padding=context_padding,
-                #                                                     answer_padding=answer_padding,
-                #                                                     positional_encodings=True)
-                # decoder_outputs = self.dual_ptr_rnn_decoder(self_attended_decoded,
-                #                                             final_context, final_question, hidden=context_rnn_state)
-                # rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
-                #
-                # probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
-                #                    context_attention, question_attention,
-                #                    context_indices, question_indices,
-                #                    oov_to_limited_idx)
-                #
-                # probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
-                #
-                # mean_max_probs = torch.mean(probs.max(-1)[0])
-                # return None, mean_max_probs
+            if self.args.tune or self.args.test_after_tune:
 
                 return None, self.scoring(self_attended_context, final_context, final_question,
                                      context_indices, question_indices,

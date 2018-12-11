@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-from text.torchtext.datasets.generic import Query
 from text import torchtext
 from argparse import ArgumentParser
 import ujson as json
@@ -20,7 +19,6 @@ from sklearn.utils.fixes import signature
 
 
 from sklearn.metrics import *
-
 
 
 def get_all_splits(args, new_vocab):
@@ -90,58 +88,48 @@ def run(args, field, val_sets, model):
     print(f'{args.model} has {num_param:,} parameters')
     model.to(device)
 
-    decaScore = []
     model.eval()
-    thresholds = args.thresholds
 
     if args.tune:
-        # for threshold in thresholds:
-        # best_metric = 0
-        # best_threshold = 0
-        with torch.no_grad():
-            for task, it in iters:
-                print(task)
+        best_K= 1
+        best_roc = 0
+        best_answers = []
+        best_scores = []
 
+        # for K in range(1, args.max_output_length):
+        for K in range(1, 4):
+            with torch.no_grad():
+                task, it = iters[0]
 
                 # predictions *****
-                threshold = 0.5
                 scores = []
-                predictions = []
-                ids = []
                 for batch_idx, batch in enumerate(it):
-                    if args.tune:
-                        _, score = model(batch, iteration=1)
-                        score = torch.mean(score, dim=1)
-                        for i, ss in enumerate(score):
-                            scores.append(ss)
-                            if ss > threshold:
-                                pp = "positive"
-                            else:
-                                pp = "negative"
-                            predictions.append(pp)
+                    _, score = model(batch, iteration=1)
+                    _, seq_len = score.size()
+                    # score[(score != 1.0).nonzero()
+                    score_cleaned = torch.where(score < 0.99999, score, torch.zeros_like(score))
+
+                    # score_sorted, score_sorted_indices = torch.sort(score, dim=1, descending=True)
+                    # score = torch.mean(score_sorted[:, int(1/K * seq_len): int((1-1/K) * seq_len)], dim=1)
+
+                    score = torch.mean(torch.topk(score_cleaned, K, dim=1)[0], dim=1)
+                    # score = torch.max(score, dim=1)[0]
+                    for i, ss in enumerate(score):
+                        scores.append(ss)
 
 
                 # answers *****
-                def from_all_answers(an):
-                    return [it.dataset.all_answers[sid] for sid in an.tolist()]
-
                 answers = []
                 for batch_idx, batch in enumerate(it):
-                    if hasattr(batch, 'wikisql_id'):
-                        a = from_all_answers(batch.wikisql_id.data.cpu())
-                    elif hasattr(batch, 'squad_id'):
-                        a = from_all_answers(batch.squad_id.data.cpu())
-                    elif hasattr(batch, 'woz_id'):
-                        a = from_all_answers(batch.woz_id.data.cpu())
+
+                    if task == 'almond':
+                        setattr(field, 'use_revtok', False)
+                        setattr(field, 'tokenize', tokenizer)
+                        a = field.reverse_almond(batch.answer.data)
+                        setattr(field, 'use_revtok', True)
+                        setattr(field, 'tokenize', 'revtok')
                     else:
-                        if task == 'almond':
-                            setattr(field, 'use_revtok', False)
-                            setattr(field, 'tokenize', tokenizer)
-                            a = field.reverse_almond(batch.answer.data)
-                            setattr(field, 'use_revtok', True)
-                            setattr(field, 'tokenize', 'revtok')
-                        else:
-                            a = field.reverse(batch.answer.data)
+                        a = field.reverse(batch.answer.data)
                     for aa in a:
                         if aa == 'positive':
                             aa = 1
@@ -151,140 +139,183 @@ def run(args, field, val_sets, model):
 
 
 
-                ans_sorted, score_sorted = list(zip(*sorted(zip(answers, scores), key= lambda x: x[1], reverse=True)))
-                print(f'-------------------')
-                print(f'answers:  {ans_sorted}\n')
-                print(f'scores: {score_sorted}\n')
-                print(f'-------------------')
-
-
-                # results *****
-                # metrics, answers = compute_metrics(predictions, answers,
-                #                                    bleu='iwslt' in task or 'multi30k' in task or 'almond' in task,
-                #                                    dialogue='woz' in task,
-                #                                    rouge='cnn' in task, logical_form='sql' in task,
-                #                                    corpus_f1='zre' in task,
-                #                                    func_accuracy='almond' in task and not args.reverse_task_bool,
-                #                                    dev_accuracy='almond' in task and not args.reverse_task_bool,
-                #                                    args=args)
-
+                # ans_sorted, score_sorted = list(zip(*sorted(zip(answers, scores), key= lambda x: x[1], reverse=True)))
+                # print(f'-------------------')
+                # print(f'answers:  {ans_sorted}\n')
+                # print(f'scores: {score_sorted}\n')
+                # print(f'-------------------')
 
                 # precision_recall_curve
 
-                precision, recall, thresholds = precision_recall_curve(answers, scores)
-                area_under_precision_recall = average_precision_score(answers, scores)
 
-                # if metrics > best_metric:
-                #     best_metric = metrics
-                #     best_threshold = threshold
+            area_under_roc = roc_auc_score(answers, scores)
 
+            print(f'-------------------')
+            # print(f'precision:  {precision}\n')
+            # print(f'recall:  {recall}\n')
+            # print(f'thresholds:  {thresholds}\n')
+            print(f'K : {K}\n')
+            print(f'roc_auc_score:  {area_under_roc}\n')
+            print(f'-------------------')
 
-                print(f'-------------------')
-                print(f'precision:  {precision}\n')
-                print(f'recall:  {recall}\n')
-                print(f'thresholds:  {thresholds}\n')
-                print(f'area_under_precision_recall:  {area_under_precision_recall}\n')
-                print(f'-------------------')
-
-                fig1 = plt.figure()
-                average_precision = average_precision_score(answers, scores)
-                step_kwargs = ({'step': 'post'}
-                               if 'step' in signature(plt.fill_between).parameters
-                               else {})
-                plt.step(recall, precision, color='b', alpha=0.2,
-                         where='post')
-                plt.fill_between(recall, precision, alpha=0.2, color='b', **step_kwargs)
-
-                plt.xlabel('Recall')
-                plt.ylabel('Precision')
-                plt.ylim([0.0, 1.05])
-                plt.xlim([0.0, 1.0])
-                plt.title('2-class Precision-Recall curve: AP={0:0.2f}'.format(average_precision))
-                fig1.savefig(os.path.join(args.path, 'precision_recall.png'))
+            if best_roc < area_under_roc:
+                best_roc = area_under_roc
+                best_K = K
+                best_answers = answers
+                best_scores = scores
 
 
+        print(f'-------------------')
+        print(f'best_K : {best_K}\n')
+        print(f'best_roc:  {best_roc}\n')
+        print(f'-------------------')
+
+        precision, recall, thresholds = precision_recall_curve(best_answers, best_scores)
+        print(f'precision:  {precision}\n')
+        print(f'recall:  {recall}\n')
+        print(f'thresholds:  {thresholds}\n')
+
+        fig1 = plt.figure()
+        average_precision = average_precision_score(best_answers, best_scores)
+        step_kwargs = ({'step': 'post'}
+                       if 'step' in signature(plt.fill_between).parameters
+                       else {})
+        plt.step(recall, precision, color='b', alpha=0.2,
+                 where='post')
+        plt.fill_between(recall, precision, alpha=0.2, color='b', **step_kwargs)
+
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.ylim([0.0, 1.05])
+        plt.xlim([0.0, 1.0])
+        plt.title('2-class Precision-Recall curve: AP={0:0.2f}'.format(average_precision))
+        fig1.savefig(os.path.join(args.path, 'precision_recall.png'))
+
+
+        fpr, tpr, thresholds = roc_curve(best_answers, best_scores)
+        area_under_roc = roc_auc_score(best_answers, best_scores)
+
+        fpr_div_tpr = [x/y for x, y in zip(fpr, tpr) if y!=0]
+        optimal_threshold = thresholds[np.argmax(fpr_div_tpr)]
+
+        print(f'-------------------')
+        print(f'false positive rate:  {fpr}\n')
+        print(f'true positive rate:  {tpr}\n')
+        print(f'thresholds:  {thresholds}\n')
+        print(f'area_under_roc:  {area_under_roc}\n')
+        print(f'optimal_threshold:  {optimal_threshold}\n')
+        print(f'-------------------')
 
 
 
+        ###########################################################
+        fig2 = plt.figure()
+        tprs = []
+        aucs = []
+        mean_fpr = np.linspace(0, 1, 100)
+        i = 0
 
+        # Compute ROC curve and area the curve
+        tprs.append(interp(mean_fpr, fpr, tpr))
+        tprs[-1][0] = 0.0
+        roc_auc = auc(fpr, tpr)
+        aucs.append(roc_auc)
+        plt.plot(fpr, tpr, lw=1, alpha=0.3,
+                 label='ROC fold %d (AUC = %0.2f)' % (i, roc_auc))
 
+        plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
+                 label='Chance', alpha=.8)
 
-                fpr, tpr, thresholds = roc_curve(answers, scores)
-                area_under_roc = roc_auc_score(answers, scores)
+        plt.scatter(fpr, thresholds, color='k', s=1)
 
-                print(f'-------------------')
-                print(f'false positive rate:  {fpr}\n')
-                print(f'true positive rate:  {tpr}\n')
-                print(f'thresholds:  {thresholds}\n')
-                print(f'area_under_roc:  {area_under_roc}\n')
-                print(f'-------------------')
+        mean_tpr = np.mean(tprs, axis=0)
+        mean_tpr[-1] = 1.0
+        mean_auc = auc(mean_fpr, mean_tpr)
+        std_auc = np.std(aucs)
+        plt.plot(mean_fpr, mean_tpr, color='b',
+                 label=r'Mean ROC (AUC = %0.2f $\pm$ %0.2f)' % (mean_auc, std_auc),
+                 lw=2, alpha=.8)
 
-                # def perf_measure(y_actual, y_hat, threshold):
-                #     TP = 0
-                #     FP = 0
-                #     TN = 0
-                #     FN = 0
-                #
-                #     for i in range(len(y_hat)):
-                #         if y_actual[i] == y_hat[i] == 1:
-                #             TP += 1
-                #         if y_hat[i] == 1 and y_actual[i] != y_hat[i]:
-                #             FP += 1
-                #         if y_actual[i] == y_hat[i] == 0:
-                #             TN += 1
-                #         if y_hat[i] == 0 and y_actual[i] != y_hat[i]:
-                #             FN += 1
-                #
-                # return (TP, FP, TN, FN)
-                #
-                # perf_measure(answers, scores)
+        std_tpr = np.std(tprs, axis=0)
+        tprs_upper = np.minimum(mean_tpr + std_tpr, 1)
+        tprs_lower = np.maximum(mean_tpr - std_tpr, 0)
+        plt.fill_between(mean_fpr, tprs_lower, tprs_upper, color='grey', alpha=.2,
+                         label=r'$\pm$ 1 std. dev.')
 
-                ############################################################
-                fig2 = plt.figure()
-                tprs = []
-                aucs = []
-                mean_fpr = np.linspace(0, 1, 100)
-                i = 0
+        plt.xlim([-0.05, 1.05])
+        plt.ylim([-0.05, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title(f'Receiver operating characteristic example for K={best_K}')
+        plt.legend(loc="lower right")
+        # plt.show()
+        fig2.savefig(os.path.join(args.path, 'roc.png'))
+        print('plot complete')
+        ############################################################
 
-                # Compute ROC curve and area the curve
-                tprs.append(interp(mean_fpr, fpr, tpr))
-                tprs[-1][0] = 0.0
-                roc_auc = auc(fpr, tpr)
-                aucs.append(roc_auc)
-                plt.plot(fpr, tpr, lw=1, alpha=0.3,
-                         label='ROC fold %d (AUC = %0.2f)' % (i, roc_auc))
+    elif args.test_after_tune:
 
-                plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
-                         label='Chance', alpha=.8)
+        with torch.no_grad():
+            task, it = iters[0]
 
-                mean_tpr = np.mean(tprs, axis=0)
-                mean_tpr[-1] = 1.0
-                mean_auc = auc(mean_fpr, mean_tpr)
-                std_auc = np.std(aucs)
-                plt.plot(mean_fpr, mean_tpr, color='b',
-                         label=r'Mean ROC (AUC = %0.2f $\pm$ %0.2f)' % (mean_auc, std_auc),
-                         lw=2, alpha=.8)
+            # predictions *****
+            threshold = args.optimal_th
+            scores = []
+            predictions = []
+            for batch_idx, batch in enumerate(it):
+                _, score = model(batch, iteration=1)
+                _, seq_len = score.size()
+                # score[(score != 1.0).nonzero()
+                score_cleaned = torch.where(score < 0.99999, score, torch.zeros_like(score))
 
-                std_tpr = np.std(tprs, axis=0)
-                tprs_upper = np.minimum(mean_tpr + std_tpr, 1)
-                tprs_lower = np.maximum(mean_tpr - std_tpr, 0)
-                plt.fill_between(mean_fpr, tprs_lower, tprs_upper, color='grey', alpha=.2,
-                                 label=r'$\pm$ 1 std. dev.')
+                # score_sorted, score_sorted_indices = torch.sort(score, dim=1, descending=True)
+                # score = torch.mean(score_sorted[:, int(1/K * seq_len): int((1-1/K) * seq_len)], dim=1)
 
-                plt.xlim([-0.05, 1.05])
-                plt.ylim([-0.05, 1.05])
-                plt.xlabel('False Positive Rate')
-                plt.ylabel('True Positive Rate')
-                plt.title('Receiver operating characteristic example')
-                plt.legend(loc="lower right")
-                # plt.show()
-                fig2.savefig(os.path.join(args.path, 'roc.png'))
-                print('plot complete')
-                ############################################################
+                score = torch.mean(torch.topk(score_cleaned, args.K, dim=1)[0], dim=1)
+                for i, ss in enumerate(score):
+                    scores.append(ss)
+                    if ss > threshold:
+                        pp = "positive"
+                    else:
+                        pp = "negative"
+                    predictions.append(pp)
 
+            # answers *****
+
+            answers = []
+            for batch_idx, batch in enumerate(it):
+                if task == 'almond':
+                    setattr(field, 'use_revtok', False)
+                    setattr(field, 'tokenize', tokenizer)
+                    a = field.reverse_almond(batch.answer.data)
+                    setattr(field, 'use_revtok', True)
+                    setattr(field, 'tokenize', 'revtok')
+                else:
+                    a = field.reverse(batch.answer.data)
+                for aa in a:
+                    answers.append(aa)
+
+            # results ***
+            metrics, answers = compute_metrics(predictions, answers,
+                                               bleu='iwslt' in task or 'multi30k' in task or 'almond' in task,
+                                               dialogue='woz' in task,
+                                               rouge='cnn' in task, logical_form='sql' in task, corpus_f1='zre' in task,
+                                               func_accuracy='almond' in task and not args.reverse_task_bool,
+                                               dev_accuracy='almond' in task and not args.reverse_task_bool,
+                                               args=args)
+
+            metric_entry = ''
+            for metric_key, metric_value in metrics.items():
+                metric_entry += f'{metric_key}_{metric_value:.2f}:'
+            metric_entry = metric_entry[:-1]
+
+            print(f'-------------------')
+            print(metric_entry)
+            print(f'-------------------')
 
 
     else:
+        decaScore = []
         with torch.no_grad():
             for task, it in iters:
                 print(task)
@@ -431,8 +462,12 @@ def get_args():
     parser.add_argument('--skip_cache', action='store_true', dest='skip_cache_bool', help='whether to use exisiting cached splits or generate new ones')
     parser.add_argument('--reverse_task', action='store_true', dest='reverse_task_bool', help='whether to translate english to code or the other way around')
     parser.add_argument('--eval_dir', type=str, default=None, help='use this directory to store eval results')
+
     parser.add_argument('--tune', action='store_true', help='whether to tune or predict')
-    parser.add_argument('--thresholds', default=[0], nargs='+', type=int, help='a list of thresholds that can be used to tune the model')
+
+    parser.add_argument('--test_after_tune', action='store_true', help='test after tuning the model and finding the optimal K and threshold')
+    parser.add_argument('--K', default=10, type=int, help='optimal K for topk')
+    parser.add_argument('--optimal_th', default=0.5, type=float, help='optimal threshold to gain highest TP/FP')
 
     args = parser.parse_args()
 

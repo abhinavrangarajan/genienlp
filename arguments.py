@@ -89,8 +89,8 @@ def parse():
     parser.add_argument('--elmo', action='store_true', help='whether to use ELMo: Deep contextualized word representations')
 
     parser.add_argument('--lambd', default=0, type=float, help='cofidence loss regularization strength')
-    parser.add_argument('--baseline', default=0, help='cofidence loss regularization strength')
-    parser.add_argument('--budget', default=0.3 , type=float, help='whether to use ELMo: Deep contextualized word representations')
+    parser.add_argument('--baseline', default='store_true', default=False, help='whether to train model without confidence branch')
+    parser.add_argument('--budget', default=0.3 , type=float, help='the budget for how often the network can get hints')
 
 
     args = parser.parse_args()

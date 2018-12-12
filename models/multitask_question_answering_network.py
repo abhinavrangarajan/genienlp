@@ -168,7 +168,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 final_context, final_question, hidden=context_rnn_state)
             rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
 
-            probs, confidence = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, context_attention,
+            probs, confidence, _ = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, context_attention,
                                            question_attention, context_indices, question_indices,  oov_to_limited_idx)
 
             probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)

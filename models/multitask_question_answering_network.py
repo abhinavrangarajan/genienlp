@@ -83,13 +83,15 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         self.generative_vocab_size = min(len(field.vocab), args.max_generative_vocab)
         self.out = nn.Linear(args.dimension, self.generative_vocab_size)
 
+        self.confidence = nn.Linear(self.generative_vocab_size, 1)
+
         self.dropout = nn.Dropout(0.4)
 
     def set_embeddings(self, embeddings):
         self.encoder_embeddings.set_embeddings(embeddings)
         self.decoder_embeddings.set_embeddings(embeddings)
 
-    def forward(self, batch, iteration):
+    def forward(self, batch, iteration, lambd=0, validate=False):
         context, context_lengths, context_limited    = batch.context,  batch.context_lengths,  batch.context_limited
         question, question_lengths, question_limited = batch.question, batch.question_lengths, batch.question_limited
         answer, answer_lengths, answer_limited       = batch.answer,   batch.answer_lengths,   batch.answer_limited
@@ -166,29 +168,80 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 final_context, final_question, hidden=context_rnn_state)
             rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
 
-            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, 
-                context_attention, question_attention, 
-                context_indices, question_indices, 
-                oov_to_limited_idx)
+            probs, confidence = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, context_attention,
+                                           question_attention, context_indices, question_indices,  oov_to_limited_idx)
 
             probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
+            confidence, targets = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), pad_idx=pad_idx)
+            confidence = F.sigmoid(confidence)
 
-            if self.args.use_bleu_loss and iteration >= 2.0/3 * max(self.args.train_iterations):
-            # if self.args.use_bleu_loss and iteration >= 1.0 / 3 * max(self.args.train_iterations):
-                max_order = 4
-                answer = answer[0][1:]
-                target = targets[0]
-                batch_size = 1
-                translation_len = answer.shape
+            # Make sure we don't have any numerical instability
+            eps = 1e-12
+            probs = torch.clamp(probs, 0. + eps, 1. - eps)
+            confidence = torch.clamp(confidence, 0. + eps, 1. - eps)
 
-                loss = expectedMultiBleu.bleu(answer, torch.LongTensor(target), torch.FloatTensor([translation_len] * batch_size), translation_len, max_order=max_order, smooth=True)
+            if not self.args.baseline:
+                # Randomly set half of the confidences to 1 (i.e. no hints)
+                # b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)).to(self.args.device)
+                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1))
+                conf = confidence * b + (1 - b)
+                labels_onehot = self.encode_onehot(targets, self.generative_vocab_size)
+                pred_new = probs * conf.expand_as(probs) + labels_onehot * (1 - conf.expand_as(labels_onehot))
+                pred_new = torch.log(pred_new)
             else:
-                loss = F.nll_loss(probs.log(), targets)
-            return loss, None
+                pred_new = torch.log(probs)
+
+            xentropy_loss = F.nll_loss(pred_new, targets)
+            confidence_loss = torch.mean(-torch.log(confidence))
+
+            if self.args.baseline:
+                total_loss = xentropy_loss
+            else:
+                total_loss = xentropy_loss + (lambd * confidence_loss)
+
+
+            return total_loss, None, xentropy_loss, confidence_loss
+
+
+
+        elif not validate:
+            answer_padding = (answer_indices.data == pad_idx)[:, :-1]
+            answer_embedded = self.decoder_embeddings(answer)
+            self_attended_decoded = self.self_attentive_decoder(answer_embedded[:, :-1].contiguous(),
+                                                                self_attended_context, context_padding=context_padding,
+                                                                answer_padding=answer_padding,
+                                                                positional_encodings=True)
+            decoder_outputs = self.dual_ptr_rnn_decoder(self_attended_decoded,
+                                                        final_context, final_question, hidden=context_rnn_state)
+            rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
+
+            probs, confidence, penultimate_scores = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                                           context_attention,
+                                           question_attention, context_indices, question_indices, oov_to_limited_idx)
+
+            probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
+            confidence, targets = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), pad_idx=pad_idx)
+            penultimate_scores, targets = mask(answer_indices[:, 1:].contiguous(), penultimate_scores.contiguous(), pad_idx=pad_idx)
+            confidence = F.sigmoid(confidence)
+
+
+            return probs, confidence, penultimate_scores
+
         else:
-            return None, self.greedy(self_attended_context, final_context, final_question, 
+
+            return None, self.greedy(self_attended_context, final_context, final_question,
                 context_indices, question_indices,
                 oov_to_limited_idx, rnn_state=context_rnn_state).data
+
+
+    def encode_onehot(self, labels, n_classes):
+        onehot = torch.FloatTensor(labels.size()[0], n_classes)
+        labels = labels.data
+        if labels.is_cuda:
+            onehot = onehot.cuda()
+        onehot.zero_()
+        onehot.scatter_(1, labels.view(-1, 1), 1)
+        return onehot
  
     def reshape_rnn_state(self, h):
         return h.view(h.size(0) // 2, 2, h.size(1), h.size(2)) \
@@ -201,9 +254,13 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         oov_to_limited_idx):
 
         size = list(outputs.size())
-
         size[-1] = self.generative_vocab_size
         scores = generator(outputs.view(-1, outputs.size(-1))).view(size)
+
+        size2 = list(scores.size())
+        size2[-1] = 1
+        confidence = self.confidence(scores.view(-1, scores.size(-1))).view(size2)
+
         p_vocab = F.softmax(scores, dim=scores.dim()-1)
         scaled_p_vocab = vocab_pointer_switches.expand_as(p_vocab) * p_vocab
 
@@ -221,7 +278,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, question_indices.unsqueeze(1).expand_as(question_attention), 
             ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(question_attention) * question_attention)
 
-        return scaled_p_vocab
+        return scaled_p_vocab, confidence, scores
 
 
     def greedy(self, self_attended_context, context, question, context_indices, question_indices, oov_to_limited_idx, rnn_state=None):
@@ -251,7 +308,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 context_alignment=context_alignment, question_alignment=question_alignment,
                 hidden=rnn_state, output=rnn_output)
             rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
-            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, 
+            probs, confidence, penultimate_scores = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
                 context_attention, question_attention, 
                 context_indices, question_indices, 
                 oov_to_limited_idx)
@@ -262,6 +319,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if eos_yet.all():
                 break
         return outs
+
 
 
 

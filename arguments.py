@@ -88,6 +88,9 @@ def parse():
     parser.add_argument('--use_bleu_loss', action='store_true', help='whether to use differentiable BLEU loss or not')
     parser.add_argument('--elmo', action='store_true', help='whether to use ELMo: Deep contextualized word representations')
 
+    parser.add_argument('--lambd', default=0, type=float, help='cofidence loss regularization strength')
+    parser.add_argument('--baseline', default=0, help='cofidence loss regularization strength')
+    parser.add_argument('--budget', default=0.3 , type=float, help='whether to use ELMo: Deep contextualized word representations')
 
 
     args = parser.parse_args()
@@ -104,7 +107,7 @@ def parse():
     args.timestamp = '-'.join(datetime.datetime.now(tz=tz.tzoffset(None, -8*60*60)).strftime("%y/%m/%d/%H/%M/%S.%f").split())
 
     if len(args.train_tasks) > 1:
-        if args.train_iterations is  None:
+        if args.train_iterations is None:
             args.train_iterations = [1]
         if len(args.train_iterations) < len(args.train_tasks):
             args.train_iterations = len(args.train_tasks) * args.train_iterations

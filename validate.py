@@ -8,7 +8,7 @@ def compute_validation_outputs(model, val_iter, field, iteration, optional_names
     loss, predictions, answers = [], [], []
     outputs = [[] for _ in range(len(optional_names))]
     for batch_idx, batch in enumerate(val_iter):
-        l, p = model(batch, iteration)
+        l, p = model(batch, iteration, validate=True)
         loss.append(l)
         predictions.append(pad(p, 150, dim=-1, val=field.vocab.stoi['<pad>']))
         a = None

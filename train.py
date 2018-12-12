@@ -129,17 +129,19 @@ def get_learning_rate(i, args):
         1 / math.sqrt(i), i / (args.warmup * math.sqrt(args.warmup)))
 
 
-def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, writer=None, it=None):
+def step(model, batch, opt, iteration, field, task, lr=None, lambd=0, grad_clip=None, writer=None, it=None):
     model.train()
     opt.zero_grad()
-    loss, predictions = model(batch, iteration)
+
+    loss, predictions, xent_loss, confidence_loss = model(batch, iteration, lambd)
+
     loss.backward()
     if lr is not None:
         opt.param_groups[0]['lr'] = lr
     if grad_clip > 0.0:
         torch.nn.utils.clip_grad_norm_(model.params, grad_clip)
     opt.step()
-    return loss.item(), {}
+    return loss.item(), {}, xent_loss, confidence_loss
 
 
 def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_size=1, 
@@ -171,6 +173,8 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
             if task_iterations == 0:
                 continue
             task_iteration = 1
+
+            lambd = args.lambd
             for batch in train_iter:
                 if not args.resume or iteration > start_iteration:
                     task_progress = f'{task_iteration}/{task_iterations}:' if task_iterations is not None else ''
@@ -219,10 +223,18 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                     # lr update
                     lr = opt.param_groups[0]['lr'] 
                     if args.warmup > 0 and args.transformer_lr:
-                        lr = get_learning_rate(iteration, args) 
+                        lr = get_learning_rate(iteration, args)
+
 
                     # param update
-                    loss, train_metric_dict = step(model, batch, opt, iteration, field, task, lr=lr, grad_clip=args.grad_clip, writer=writer, it=train_iter)
+                    loss, train_metric_dict, _, confidence_loss = step(model, batch, opt, iteration, field, task, lr=lr, lambd=lambd, grad_clip=args.grad_clip, writer=writer, it=train_iter)
+
+                    # lambd update
+                    if not args.baseline:
+                        if args.budget > confidence_loss.item():
+                            lambd = lambd / 1.01
+                        elif args.budget <= confidence_loss.item():
+                            lambd = lambd / 0.99
 
                     # train metrics
                     local_loss += loss

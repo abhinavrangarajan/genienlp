@@ -176,16 +176,14 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             confidence = F.sigmoid(confidence)
 
             # Make sure we don't have any numerical instability
-            eps = 1e-12
-            probs = torch.clamp(probs, 0. + eps, 1. - eps)
-            confidence = torch.clamp(confidence, 0. + eps, 1. - eps)
+            probs = torch.clamp(probs, 0. + EPSILON, 1. - EPSILON)
+            confidence = torch.clamp(confidence, 0. + EPSILON, 1. - EPSILON)
 
             if not self.args.baseline:
                 # Randomly set half of the confidences to 1 (i.e. no hints)
-                # b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)).to(self.args.device)
-                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1))
+                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)).to(self.device)
                 conf = confidence * b + (1 - b)
-                labels_onehot = self.encode_onehot(targets, self.generative_vocab_size)
+                labels_onehot = self.encode_onehot(targets, probs.size(-1))
                 pred_new = probs * conf.expand_as(probs) + labels_onehot * (1 - conf.expand_as(labels_onehot))
                 pred_new = torch.log(pred_new)
             else:

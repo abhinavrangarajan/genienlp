@@ -273,6 +273,10 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                                 writer.add_scalars(f'{task}/{metric_key}', {'train': metric_value}, iteration)
                                 writer.add_scalars(f'{task}/train', {f'{metric_key}': metric_value}, iteration)
 
+                            # add scalars to track ood behaviour
+                            writer.add_scalars(f'loss/train', {f'{task}': confidence_loss}, iteration)
+                            writer.add_scalar(f'lambd', lambd, iteration)
+
 
                         local_loss = 0
                         local_train_metric_dict = {}

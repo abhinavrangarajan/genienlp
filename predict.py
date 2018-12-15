@@ -117,7 +117,7 @@ def run(args, field, val_sets, model):
                     predictions = []
                     ids = []
                     for batch_idx, batch in enumerate(it):
-                        _, p = model(batch, iteration=1, validate=True)
+                        _, p = model(batch, iteration=1, predict=False)
 
                         if task == 'almond':
                             setattr(field, 'use_revtok', False)

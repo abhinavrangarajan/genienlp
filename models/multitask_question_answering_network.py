@@ -91,7 +91,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         self.encoder_embeddings.set_embeddings(embeddings)
         self.decoder_embeddings.set_embeddings(embeddings)
 
-    def forward(self, batch, iteration, lambd=0, validate=False):
+    def forward(self, batch, iteration, lambd=0, predict=False):
         context, context_lengths, context_limited    = batch.context,  batch.context_lengths,  batch.context_limited
         question, question_lengths, question_limited = batch.question, batch.question_lengths, batch.question_limited
         answer, answer_lengths, answer_limited       = batch.answer,   batch.answer_lengths,   batch.answer_limited
@@ -202,7 +202,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
 
 
 
-        elif not validate:
+        elif not predict:
             answer_padding = (answer_indices.data == pad_idx)[:, :-1]
             answer_embedded = self.decoder_embeddings(answer)
             self_attended_decoded = self.self_attentive_decoder(answer_embedded[:, :-1].contiguous(),

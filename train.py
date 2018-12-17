@@ -265,7 +265,8 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                         len_answers = 0  
     
                         if writer is not None:
-                            writer.add_scalars(f'loss/train', {f'{task}': local_loss}, iteration)
+                            writer.add_scalars(f'loss/local_loss', {f'{task}_loss': local_loss}, iteration)
+                            writer.add_scalars(f'loss/confidence_loss', {f'{task}_confidence_loss': confidence_loss}, iteration)
                             for metric_key, metric_value in local_train_metric_dict.items():
                                 writer.add_scalars(f'train/{metric_key}', {task: metric_value}, iteration)
                                 writer.add_scalars(f'{metric_key}/train', {task: metric_value}, iteration)
@@ -274,8 +275,7 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                                 writer.add_scalars(f'{task}/train', {f'{metric_key}': metric_value}, iteration)
 
                             # add scalars to track ood behaviour
-                            writer.add_scalars(f'loss/train', {f'{task}': confidence_loss}, iteration)
-                            writer.add_scalar(f'lambd', lambd, iteration)
+                            writer.add_scalars(f'lambd', {task: lambd}, iteration)
 
 
                         local_loss = 0

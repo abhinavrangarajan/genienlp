@@ -95,6 +95,7 @@ def run(args, field, val_sets, model):
 
     model.eval()
     mode = args.mode
+    print(f'mode is {mode}')
 
     with torch.no_grad():
         task, it = iters[0]
@@ -229,7 +230,7 @@ def get_args():
                     'transformer_layers', 'rnn_layers', 'transformer_hidden',
                     'dimension', 'load', 'max_val_context_length', 'val_batch_size',
                     'transformer_heads', 'max_output_length', 'max_generative_vocab',
-                    'lower', 'cove', 'intermediate_cove', 'elmo']
+                    'lower', 'cove', 'intermediate_cove', 'elmo', 'lambd']
         for r in retrieve:
             if r in config:
                 setattr(args, r, config[r])

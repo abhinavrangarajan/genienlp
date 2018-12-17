@@ -117,7 +117,7 @@ def run(args, field, val_sets, model):
                     predictions = []
                     ids = []
                     for batch_idx, batch in enumerate(it):
-                        _, p = model(batch, iteration=1, predict=False)
+                        _, p = model(batch, iteration=1, predict=True)
 
                         if task == 'almond':
                             setattr(field, 'use_revtok', False)
@@ -226,7 +226,7 @@ def get_args():
                     'transformer_layers', 'rnn_layers', 'transformer_hidden', 
                     'dimension', 'load', 'max_val_context_length', 'val_batch_size', 
                     'transformer_heads', 'max_output_length', 'max_generative_vocab', 
-                    'lower', 'cove', 'intermediate_cove', 'elmo', 'lambd', 'baseline']
+                    'lower', 'cove', 'intermediate_cove', 'elmo']
         for r in retrieve:
             if r in config:
                 setattr(args, r,  config[r])

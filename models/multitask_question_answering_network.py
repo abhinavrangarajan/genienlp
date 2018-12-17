@@ -110,7 +110,6 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         elif self.args.elmo:
             context_list = []
             for b in range(context.size(0)):
-                #FIXME
                 lc = [self.field.decoder_itos[i] if i < self.args.max_generative_vocab else self.field.decoder_itos[0] for i in context[b, :]]
                 if lc[0] == self.field.decoder_itos[2]:
                     lc[0] = '<S>'
@@ -201,7 +200,6 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return total_loss, None, xentropy_loss, confidence_loss
 
 
-
         elif not predict:
             answer_padding = (answer_indices.data == pad_idx)[:, :-1]
             answer_embedded = self.decoder_embeddings(answer)
@@ -222,11 +220,9 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             penultimate_scores, targets = mask(answer_indices[:, 1:].contiguous(), penultimate_scores.contiguous(), pad_idx=pad_idx)
             confidence = F.sigmoid(confidence)
 
-
             return probs, confidence, penultimate_scores
 
         else:
-
             return None, self.greedy(self_attended_context, final_context, final_question,
                 context_indices, question_indices,
                 oov_to_limited_idx, rnn_state=context_rnn_state).data

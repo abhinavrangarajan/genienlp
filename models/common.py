@@ -232,9 +232,20 @@ def mask(targets, out, squash=True, pad_idx=1):
     out_mask = mask.unsqueeze(-1).expand_as(out).contiguous()
     if squash:
         out_after = out[out_mask].contiguous().view(-1, out.size(-1))
+    else:
+        out_after = out * out_mask.float()
     targets_after = targets[mask]
     return out_after, targets_after
 
+def make_confidence(targets, out, confidence, pad_idx=1):
+    confidence = confidence.squeeze(-1)
+    mask = (targets != pad_idx)
+    # out_mask = mask.unsqueeze(-1).expand_as(out).contiguous()
+    lengths = torch.sum(mask, -1)
+    res = []
+    for i, val in enumerate(lengths):
+        res += val.item()*[confidence[i].item()]
+    return torch.Tensor(res).unsqueeze(-1)
 
 
 class Highway(torch.nn.Module):

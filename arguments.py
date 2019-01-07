@@ -91,6 +91,7 @@ def parse():
     parser.add_argument('--lambd', default=0, type=float, help='cofidence loss regularization strength')
     parser.add_argument('--baseline', action='store_true', default=False, help='whether to train model without confidence branch')
     parser.add_argument('--budget', default=0.3, type=float, help='the budget for how often the network can get hints')
+    parser.add_argument('--confidence_projection', action='store_true', help='whether to project confidence scores for each sequence or not')
 
 
     args = parser.parse_args()

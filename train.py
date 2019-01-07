@@ -148,8 +148,8 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
     log_every=10, val_every=100, save_every=1000, rounds=False, val_iters=[], writer=None, start_iteration=1, rnd=1):
     """main training function"""
 
-    logger = log(rank) 
-    local_loss, num_examples, len_contexts, len_answers, iteration = 0, 0, 0, 0, start_iteration
+    logger = log(rank)
+    local_total_loss, local_xent_loss, local_confidence_loss, num_examples, len_contexts, len_answers, iteration = 0, 0, 0, 0, 0, 0, start_iteration
 
     train_iter_deep = deepcopy(train_iterations)
     local_train_metric_dict = {}
@@ -227,7 +227,7 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
 
 
                     # param update
-                    loss, train_metric_dict, _, confidence_loss = step(model, batch, opt, iteration, field, task, lr=lr, lambd=lambd, grad_clip=args.grad_clip, writer=writer, it=train_iter)
+                    loss, train_metric_dict, xent_loss, confidence_loss = step(model, batch, opt, iteration, field, task, lr=lr, lambd=lambd, grad_clip=args.grad_clip, writer=writer, it=train_iter)
 
                     # lambd update
                     if not args.baseline:
@@ -237,7 +237,9 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             lambd = lambd / 0.99
 
                     # train metrics
-                    local_loss += loss
+                    local_total_loss += loss
+                    local_xent_loss += xent_loss
+                    local_confidence_loss += confidence_loss
                     for metric_name, metric_val in train_metric_dict.items():
                         if metric_name in local_train_metric_dict:
                             local_train_metric_dict[metric_name] += metric_val / args.log_every
@@ -250,7 +252,9 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                     len_answers += batch.answer.size(1)
 
                     if log_every is not None and (iteration % log_every == 0 % log_every):
-                        local_loss /= args.log_every
+                        local_total_loss /= args.log_every
+                        local_xent_loss /= args.log_every
+                        local_confidence_loss /= args.log_every
                         num_examples /= args.log_every
                         len_contexts /= args.log_every
                         len_answers /= args.log_every
@@ -259,14 +263,15 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                         for metric_key, metric_value in local_train_metric_dict.items():
                             metric_entry += f'{metric_key}_{metric_value:.2f}:'
                         metric_entry = f'{metric_entry[:-1]}'
-                        logger.info(f'{args.timestamp}:{elapsed_time(logger)}:iteration_{iteration}:{round_progress}train_{task}:{task_progress}{avg_batch_size}loss_{local_loss:.4f}{metric_entry}') 
+                        logger.info(f'{args.timestamp}:{elapsed_time(logger)}:iteration_{iteration}:{round_progress}train_{task}:{task_progress}{avg_batch_size}loss_{local_total_loss:.4f}{metric_entry}')
                         num_examples = 0 
                         len_contexts = 0 
                         len_answers = 0  
     
                         if writer is not None:
-                            writer.add_scalars(f'loss/local_loss', {f'{task}_loss': local_loss}, iteration)
-                            writer.add_scalars(f'loss/confidence_loss', {f'{task}_confidence_loss': confidence_loss}, iteration)
+                            writer.add_scalars(f'loss/local_loss', {f'{task}_loss': local_total_loss}, iteration)
+                            writer.add_scalars(f'loss/confidence_loss', {f'{task}_confidence_loss': local_confidence_loss}, iteration)
+                            writer.add_scalars(f'loss/xent_loss', {f'{task}_xent_loss': local_xent_loss}, iteration)
                             for metric_key, metric_value in local_train_metric_dict.items():
                                 writer.add_scalars(f'train/{metric_key}', {task: metric_value}, iteration)
                                 writer.add_scalars(f'{metric_key}/train', {task: metric_value}, iteration)
@@ -277,8 +282,9 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             # add scalars to track ood behaviour
                             writer.add_scalars(f'lambd', {task: lambd}, iteration)
 
-
-                        local_loss = 0
+                        local_total_loss = 0
+                        local_confidence_loss = 0
+                        local_xent_loss = 0
                         local_train_metric_dict = {}
                         num_examples = 0
                     

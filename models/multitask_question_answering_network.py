@@ -18,7 +18,7 @@ options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_5
 weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
 
 
-from .common import positional_encodings_like, INF, EPSILON, TransformerEncoder, TransformerDecoder, PackedLSTM, LSTMDecoderAttention, LSTMDecoder, Embedding, Feedforward, mask, CoattentiveLayer
+from .common import positional_encodings_like, INF, EPSILON, TransformerEncoder, TransformerDecoder, PackedLSTM, LSTMDecoderAttention, LSTMDecoder, Embedding, Feedforward, mask, CoattentiveLayer, make_confidence
 
 
 class MultitaskQuestionAnsweringNetwork(nn.Module):
@@ -84,6 +84,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         self.out = nn.Linear(args.dimension, self.generative_vocab_size)
 
         self.confidence = nn.Linear(self.generative_vocab_size, 1)
+        self.confidence_projection = nn.Linear(args.max_answer_length, 1)
 
         self.dropout = nn.Dropout(0.4)
 
@@ -170,9 +171,27 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             probs, confidence, _ = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, context_attention,
                                            question_attention, context_indices, question_indices,  oov_to_limited_idx)
 
+            #####  #process each batch before flattening it out
+
+            if self.args.confidence_projection:
+                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+                padding_length = self.args.max_answer_length-confidence.size(1)
+                confidence = confidence.squeeze(-1)
+                confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
+                confidence = self.confidence_projection(confidence)
+                confidence = F.sigmoid(confidence)
+
+            else:
+                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+                mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+                lengths = torch.sum(mask_ans, -1)
+                confidence = F.sigmoid(confidence)
+                confidence = confidence.squeeze(-1)
+                confidence = torch.sum(confidence, -1) / lengths.float()
+
+            #####
+
             probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
-            confidence, targets = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), pad_idx=pad_idx)
-            confidence = F.sigmoid(confidence)
 
             # Make sure we don't have any numerical instability
             probs = torch.clamp(probs, 0. + EPSILON, 1. - EPSILON)
@@ -183,7 +202,10 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)).to(self.device)
                 conf = confidence * b + (1 - b)
                 labels_onehot = self.encode_onehot(targets, probs.size(-1))
-                pred_new = probs * conf.expand_as(probs) + labels_onehot * (1 - conf.expand_as(labels_onehot))
+
+                maked_confidence = make_confidence(answer_indices[:, 1:].contiguous(), probs.contiguous(), conf.contiguous())
+
+                pred_new = probs * maked_confidence.expand_as(probs) + labels_onehot * (1 - maked_confidence.expand_as(labels_onehot))
                 pred_new = torch.log(pred_new)
             else:
                 pred_new = torch.log(probs)
@@ -243,9 +265,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 .view(h.size(0) // 2, h.size(1), h.size(2) * 2).contiguous()
 
     def probs(self, generator, outputs, vocab_pointer_switches, context_question_switches, 
-        context_attention, question_attention, 
-        context_indices, question_indices, 
-        oov_to_limited_idx):
+        context_attention, question_attention, context_indices, question_indices, oov_to_limited_idx):
 
         size = list(outputs.size())
         size[-1] = self.generative_vocab_size
@@ -302,10 +322,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 context_alignment=context_alignment, question_alignment=question_alignment,
                 hidden=rnn_state, output=rnn_output)
             rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
-            probs, confidence, penultimate_scores = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
-                context_attention, question_attention, 
-                context_indices, question_indices, 
-                oov_to_limited_idx)
+            probs, _, _ = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                context_attention, question_attention, context_indices, question_indices, oov_to_limited_idx)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)
             eos_yet = eos_yet | (preds == self.field.decoder_stoi['<eos>'])

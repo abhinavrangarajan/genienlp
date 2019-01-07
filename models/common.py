@@ -240,12 +240,14 @@ def mask(targets, out, squash=True, pad_idx=1):
 def make_confidence(targets, out, confidence, pad_idx=1):
     confidence = confidence.squeeze(-1)
     mask = (targets != pad_idx)
-    # out_mask = mask.unsqueeze(-1).expand_as(out).contiguous()
     lengths = torch.sum(mask, -1)
     res = []
     for i, val in enumerate(lengths):
         res += val.item()*[confidence[i].item()]
-    return torch.Tensor(res).unsqueeze(-1)
+    res_tensor = torch.Tensor(res).unsqueeze(-1)
+    if targets.is_cuda:
+        res_tensor = res_tensor.cuda(targets.get_device())
+    return res_tensor
 
 
 class Highway(torch.nn.Module):

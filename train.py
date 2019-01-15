@@ -7,6 +7,8 @@ import random
 import collections
 from copy import deepcopy
 
+from tqdm import tqdm
+
 import logging
 from pprint import pformat
 from logging import handlers
@@ -175,7 +177,10 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
             task_iteration = 1
 
             lambd = args.lambd
-            for batch in train_iter:
+
+            progress_bar = tqdm(train_iter)
+            for i, batch in enumerate(progress_bar):
+                progress_bar.set_description('Epoch ' + str(i))
                 if not args.resume or iteration > start_iteration:
                     task_progress = f'{task_iteration}/{task_iterations}:' if task_iterations is not None else ''
                     round_progress = f'round_{rnd}:' if rounds else ''
@@ -237,7 +242,7 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             lambd = lambd / 0.99
 
                     if args.lambd_clipping:
-                        lambd = np.clip(lambd, args.lambd_clipping[0], args.lambd_clipping[1])
+                        lambd = np.asscalar(np.clip(lambd, args.lambd_clipping[0], args.lambd_clipping[1]))
 
                     # train metrics
                     local_total_loss += loss
@@ -285,6 +290,11 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             # add scalars to track ood behaviour
                             writer.add_scalars(f'lambd', {task: lambd}, iteration)
 
+                        # set progress bar description
+                        progress_bar.set_postfix(
+                                        xentropy_loss='%.3f' % (local_xent_loss),
+                                        confidence_loss='%.3f' % (local_confidence_loss))
+
                         local_total_loss = 0
                         local_confidence_loss = 0
                         local_xent_loss = 0
@@ -296,6 +306,8 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                 iteration += 1
                 if task_iterations is not None and task_iteration > task_iterations:
                     break
+
+
 
         # book keeping
         rnd += 1

@@ -235,7 +235,8 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             lambd = lambd / 1.01
                         elif args.budget <= confidence_loss.item():
                             lambd = lambd / 0.99
-                    lambd = torch.clamp(lambd, max=1.0)
+                    if lambd > 1.0:
+                        lambd = 1.0
 
                     # train metrics
                     local_total_loss += loss

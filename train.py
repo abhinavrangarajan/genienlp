@@ -235,8 +235,9 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             lambd = lambd / 1.01
                         elif args.budget <= confidence_loss.item():
                             lambd = lambd / 0.99
-                    if lambd > 1.0:
-                        lambd = 1.0
+
+                    if args.lambd_clipping:
+                        lambd = np.clip(lambd, args.lambd_clipping[0], args.lambd_clipping[1])
 
                     # train metrics
                     local_total_loss += loss

@@ -88,6 +88,8 @@ def parse():
     parser.add_argument('--use_bleu_loss', action='store_true', help='whether to use differentiable BLEU loss or not')
     parser.add_argument('--elmo', action='store_true', help='whether to use ELMo: Deep contextualized word representations')
 
+    parser.add_argument('--ood_dataset', type=str, default='binary_sent', help='out-of-distribution dataset')
+
 
 
 

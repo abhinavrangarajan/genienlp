@@ -1,4 +1,5 @@
 import torch
+from torch.autograd import Variable
 
 if torch.cuda.is_available():
     Tensor = torch.cuda.FloatTensor

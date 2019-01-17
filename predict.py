@@ -97,7 +97,7 @@ def run(args, field, val_sets, model):
         best_scores = []
 
         # for K in range(1, args.max_output_length):
-        for K in range(1, 4):
+        for K in range(1, args.max_K):
             with torch.no_grad():
                 task, it = iters[0]
 
@@ -106,14 +106,24 @@ def run(args, field, val_sets, model):
                 for batch_idx, batch in enumerate(it):
                     _, score = model(batch, iteration=1)
                     _, seq_len = score.size()
-                    # score[(score != 1.0).nonzero()
-                    score_cleaned = torch.where(score < 0.99999, score, torch.zeros_like(score))
 
-                    # score_sorted, score_sorted_indices = torch.sort(score, dim=1, descending=True)
-                    # score = torch.mean(score_sorted[:, int(1/K * seq_len): int((1-1/K) * seq_len)], dim=1)
+                    if args.scoring_method == 'sort':
+                        if K==1 or K==2:
+                            K=3
+                        score_sorted, score_sorted_indices = torch.sort(score, dim=1, descending=True)
+                        score = torch.mean(score_sorted[:, int(1/K * seq_len): int((1-1/K) * seq_len)], dim=1)
 
-                    score = torch.mean(torch.topk(score_cleaned, K, dim=1)[0], dim=1)
-                    # score = torch.max(score, dim=1)[0]
+                    elif args.scoring_method == 'topK':
+                        score_cleaned = torch.where(score < 0.99999, score, torch.zeros_like(score))
+                        score = torch.mean(torch.topk(score_cleaned, K, dim=1)[0], dim=1)
+
+                    elif args.scoring_method == 'log':
+                        score = torch.sum(torch.log(score), dim=1)
+
+                    elif args.scoring_method == 'max':
+                        score = torch.max(score, dim=1)[0]
+
+
                     for i, ss in enumerate(score):
                         scores.append(ss)
 
@@ -122,7 +132,7 @@ def run(args, field, val_sets, model):
                 answers = []
                 for batch_idx, batch in enumerate(it):
 
-                    if task == 'almond':
+                    if task == 'almond' or task == 'ood':
                         setattr(field, 'use_revtok', False)
                         setattr(field, 'tokenize', tokenizer)
                         a = field.reverse_almond(batch.answer.data)
@@ -131,29 +141,16 @@ def run(args, field, val_sets, model):
                     else:
                         a = field.reverse(batch.answer.data)
                     for aa in a:
-                        if aa == 'positive':
+                        if aa.strip() == 'positive':
                             aa = 1
                         else:
                             aa = 0
                         answers.append(aa)
 
 
-
-                # ans_sorted, score_sorted = list(zip(*sorted(zip(answers, scores), key= lambda x: x[1], reverse=True)))
-                # print(f'-------------------')
-                # print(f'answers:  {ans_sorted}\n')
-                # print(f'scores: {score_sorted}\n')
-                # print(f'-------------------')
-
-                # precision_recall_curve
-
-
             area_under_roc = roc_auc_score(answers, scores)
 
             print(f'-------------------')
-            # print(f'precision:  {precision}\n')
-            # print(f'recall:  {recall}\n')
-            # print(f'thresholds:  {thresholds}\n')
             print(f'K : {K}\n')
             print(f'roc_auc_score:  {area_under_roc}\n')
             print(f'-------------------')
@@ -164,11 +161,6 @@ def run(args, field, val_sets, model):
                 best_answers = answers
                 best_scores = scores
 
-
-        print(f'-------------------')
-        print(f'best_K : {best_K}\n')
-        print(f'best_roc:  {best_roc}\n')
-        print(f'-------------------')
 
         precision, recall, thresholds = precision_recall_curve(best_answers, best_scores)
         print(f'precision:  {precision}\n')
@@ -204,6 +196,11 @@ def run(args, field, val_sets, model):
         print(f'thresholds:  {thresholds}\n')
         print(f'area_under_roc:  {area_under_roc}\n')
         print(f'optimal_threshold:  {optimal_threshold}\n')
+        print(f'-------------------')
+
+        print(f'-------------------')
+        print(f'optimal_K : {best_K}\n')
+        print(f'best_roc:  {best_roc}\n')
         print(f'-------------------')
 
 
@@ -255,23 +252,36 @@ def run(args, field, val_sets, model):
 
     elif args.test_after_tune:
 
+
+
         with torch.no_grad():
             task, it = iters[0]
 
             # predictions *****
             threshold = args.optimal_th
+            K = args.optimal_K
             scores = []
             predictions = []
             for batch_idx, batch in enumerate(it):
                 _, score = model(batch, iteration=1)
                 _, seq_len = score.size()
-                # score[(score != 1.0).nonzero()
-                score_cleaned = torch.where(score < 0.99999, score, torch.zeros_like(score))
 
-                # score_sorted, score_sorted_indices = torch.sort(score, dim=1, descending=True)
-                # score = torch.mean(score_sorted[:, int(1/K * seq_len): int((1-1/K) * seq_len)], dim=1)
+                if args.scoring_method == 'sort':
+                    if K==1 or K==2:
+                        K=3
+                    score_sorted, score_sorted_indices = torch.sort(score, dim=1, descending=True)
+                    score = torch.mean(score_sorted[:, int(1/K * seq_len): int((1-1/K) * seq_len)], dim=1)
 
-                score = torch.mean(torch.topk(score_cleaned, args.K, dim=1)[0], dim=1)
+                elif args.scoring_method == 'topK':
+                    score_cleaned = torch.where(score < 0.99999, score, torch.zeros_like(score))
+                    score = torch.mean(torch.topk(score_cleaned, K, dim=1)[0], dim=1)
+
+                elif args.scoring_method == 'log':
+                    score = torch.sum(torch.log(score), dim=1)
+
+                elif args.scoring_method == 'max':
+                    score = torch.max(score, dim=1)[0]
+
                 for i, ss in enumerate(score):
                     scores.append(ss)
                     if ss > threshold:
@@ -284,7 +294,7 @@ def run(args, field, val_sets, model):
 
             answers = []
             for batch_idx, batch in enumerate(it):
-                if task == 'almond':
+                if task == 'almond' or task == 'ood':
                     setattr(field, 'use_revtok', False)
                     setattr(field, 'tokenize', tokenizer)
                     a = field.reverse_almond(batch.answer.data)
@@ -293,7 +303,26 @@ def run(args, field, val_sets, model):
                 else:
                     a = field.reverse(batch.answer.data)
                 for aa in a:
-                    answers.append(aa)
+                    answers.append(aa.strip())
+
+
+            # read contexts ****
+
+            contexts = []
+            for batch_idx, batch in enumerate(it):
+                c = field.reverse(batch.context.data)
+                for cc in c:
+                    contexts.append(cc)
+
+
+            # print_results
+            for i in range(len(answers)):
+                print('context:', contexts[i])
+                print('answer:', answers[i])
+                print('prediction:', predictions[i])
+                print('diff_scores_th:', (scores[i]-threshold).item())
+                print()
+
 
             # results ***
             metrics, answers = compute_metrics(predictions, answers,
@@ -315,6 +344,7 @@ def run(args, field, val_sets, model):
 
 
     else:
+
         decaScore = []
         with torch.no_grad():
             for task, it in iters:
@@ -355,7 +385,7 @@ def run(args, field, val_sets, model):
                         for batch_idx, batch in enumerate(it):
                             _, p = model(batch, iteration=1)
 
-                            if task == 'almond':
+                            if task == 'almond' or task == 'ood':
                                 setattr(field, 'use_revtok', False)
                                 setattr(field, 'tokenize', tokenizer)
                                 p = field.reverse_almond(p)
@@ -400,7 +430,7 @@ def run(args, field, val_sets, model):
                             elif hasattr(batch, 'woz_id'):
                                 a = from_all_answers(batch.woz_id.data.cpu())
                             else:
-                                if task == 'almond':
+                                if task == 'almond' or task == 'ood':
                                     setattr(field, 'use_revtok', False)
                                     setattr(field, 'tokenize', tokenizer)
                                     a = field.reverse_almond(batch.answer.data)
@@ -448,7 +478,7 @@ def get_args():
     parser = ArgumentParser()
     parser.add_argument('--path', required=True)
     parser.add_argument('--evaluate', type=str, required=True)
-    parser.add_argument('--tasks', default=['almond', 'squad', 'iwslt.en.de', 'cnn_dailymail', 'multinli.in.out', 'sst', 'srl', 'zre', 'woz.en', 'wikisql', 'schema'], nargs='+')
+    parser.add_argument('--tasks', default=['almond', 'ood', 'squad', 'iwslt.en.de', 'cnn_dailymail', 'multinli.in.out', 'sst', 'srl', 'zre', 'woz.en', 'wikisql', 'schema'], nargs='+')
     parser.add_argument('--devices', default=[0], nargs='+', type=int, help='a list of devices that can be used (multi-gpu currently WIP)')
     parser.add_argument('--seed', default=123, type=int, help='Random seed.')
     parser.add_argument('--data', default='./decaNLP/.data/', type=str, help='where to load data from.')
@@ -464,10 +494,14 @@ def get_args():
     parser.add_argument('--eval_dir', type=str, default=None, help='use this directory to store eval results')
 
     parser.add_argument('--tune', action='store_true', help='whether to tune or predict')
-
     parser.add_argument('--test_after_tune', action='store_true', help='test after tuning the model and finding the optimal K and threshold')
-    parser.add_argument('--K', default=10, type=int, help='optimal K for topk')
+    parser.add_argument('--max_K', default=10, type=int, help='optimal K for topk')
     parser.add_argument('--optimal_th', default=0.5, type=float, help='optimal threshold to gain highest TP/FP')
+    parser.add_argument('--optimal_K', default=5, type=int, help='optimal K to gain highest TP/FP')
+    parser.add_argument('--scoring_method', '-sc', default='log', type=str, help='set mode for aggregating scores over tokens in a sentence')
+
+    parser.add_argument('--ood_dataset', type=str, default='binary_sent', help='out-of-distribution dataset')
+
 
     args = parser.parse_args()
 
@@ -494,6 +528,7 @@ def get_args():
         'squad': 'nf1',
         'srl': 'nf1',
         'almond': 'bleu' if args.reverse_task_bool else 'em',
+        'ood': 'em',
         'sst': 'em',
         'wikisql': 'lfem',
         'woz.en': 'joint_goal_em',

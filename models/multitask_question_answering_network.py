@@ -230,7 +230,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return loss, None
         else:
 
-            if self.args.tune or self.args.test_after_tune:
+            if (hasattr(self.args, 'tune') and self.args.tune) or (hasattr(self.args, 'test_after_tune') and self.args.test_after_tune):
 
                 return None, self.scoring(self_attended_context, final_context, final_question,
                                      context_indices, question_indices,

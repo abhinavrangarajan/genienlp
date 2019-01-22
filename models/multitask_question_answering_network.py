@@ -57,7 +57,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         if self.args.confidence_mode == 'rnn':
             self.confidence_encoder = PackedLSTM(1, args.dimension,
                                                  batch_first=True, bidirectional=True, num_layers=1, dropout=0)
-            self.confidence_hidden_projection = nn.Linear(args.dimension/2 * 2 * 1, 1)
+            self.confidence_hidden_projection = nn.Linear(int(args.dimension/2 * 2 * 1), 1)
 
         elif self.args.confidence_mode == 'linear':
             self.confidence_projection = nn.Linear(args.max_answer_length, 1)

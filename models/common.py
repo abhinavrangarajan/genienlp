@@ -56,7 +56,7 @@ def process_confidence_scores(self, confidence, answer_indices):
         h_flattened = torch.transpose(h, 0, 1).contiguous().view(batch, -1)
 
         confidence = self.confidence_hidden_projection(h_flattened)
-        confidence = F.sigmoid(confidence)
+        confidence = torch.sigmoid(confidence)
 
 
     elif conf_mode == 'linear':
@@ -66,17 +66,17 @@ def process_confidence_scores(self, confidence, answer_indices):
         confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
 
         # do sigmoid before projection (kind of a normalization)
-        confidence = F.sigmoid(confidence)
+        confidence = torch.sigmoid(confidence)
         # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
         confidence = self.confidence_projection(confidence)
-        confidence = F.sigmoid(confidence)
+        confidence = torch.sigmoid(confidence)
 
 
     elif conf_mode == 'mean':
         confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
         mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
         lengths = torch.sum(mask_ans, -1)
-        confidence = F.sigmoid(confidence)
+        confidence = torch.sigmoid(confidence)
         confidence = confidence.squeeze(-1)
         # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
         confidence = torch.sum(confidence, -1) / lengths.float()

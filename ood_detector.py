@@ -107,7 +107,8 @@ def run(args, field, val_sets, model):
         for batch_idx, batch in enumerate(it):
 
             pred, confidence, penultimate_scores = model(batch, iteration=1, lambd=0)
-            confidence = torch.mean(confidence.squeeze(1))
+            # confidence = torch.mean(confidence.squeeze(1))
+            confidence = confidence.squeeze(1)
 
             out = []
 
@@ -125,7 +126,6 @@ def run(args, field, val_sets, model):
 
             elif mode == 'temperature':
                 T = args.T
-
                 penultimate_scores /= T
                 pred = F.softmax(penultimate_scores, dim=-1)
                 pred = torch.max(pred.data, 1)[0]
@@ -221,6 +221,8 @@ def get_args():
     parser.add_argument('--T', type=float, default=1000., help='Scaling temperature')
     parser.add_argument('--epsilon', type=float, default=0.001, help='Noise magnitude')
 
+    parser.add_argument('--ood_dataset', type=str, default='binary_sent', help='out-of-distribution dataset')
+
 
     args = parser.parse_args()
 
@@ -230,7 +232,7 @@ def get_args():
                     'transformer_layers', 'rnn_layers', 'transformer_hidden',
                     'dimension', 'load', 'max_val_context_length', 'val_batch_size',
                     'transformer_heads', 'max_output_length', 'max_generative_vocab',
-                    'lower', 'cove', 'intermediate_cove', 'elmo', 'lambd']
+                    'lower', 'cove', 'intermediate_cove', 'elmo', 'lambd', 'max_answer_length', 'confidence_projection']
         for r in retrieve:
             if r in config:
                 setattr(args, r, config[r])
@@ -239,7 +241,7 @@ def get_args():
             else:
                 setattr(args, r, None)
         args.dropout_ratio = 0.0
-        args.val_batch_size = [1]
+        # args.val_batch_size = [1]
 
     args.task_to_metric = {
         'cnn_dailymail': 'avg_rouge',
@@ -249,6 +251,7 @@ def get_args():
         'srl': 'nf1',
         'almond': 'bleu' if args.reverse_task_bool else 'em',
         'sst': 'em',
+        'ood': 'em',
         'wikisql': 'lfem',
         'woz.en': 'joint_goal_em',
         'zre': 'corpus_f1',

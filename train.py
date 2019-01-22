@@ -180,7 +180,7 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
 
             progress_bar = tqdm(train_iter)
             for i, batch in enumerate(progress_bar):
-                progress_bar.set_description('Epoch ' + str(i))
+                progress_bar.set_description('iter ' + str(i))
                 if not args.resume or iteration > start_iteration:
                     task_progress = f'{task_iteration}/{task_iterations}:' if task_iterations is not None else ''
                     round_progress = f'round_{rnd}:' if rounds else ''

@@ -94,6 +94,8 @@ def parse():
     parser.add_argument('--confidence_projection', action='store_true', help='whether to project confidence scores for each sequence or not')
     parser.add_argument('--lambd_clipping', '-lc', type=float, nargs=2, metavar=('min_val', 'max_val'), help='provides lower and upper bound for lambda')
 
+    parser.add_argument('--ood_dataset', type=str, default='binary_sent', help='out-of-distribution dataset')
+
 
     args = parser.parse_args()
     if args.model is None:

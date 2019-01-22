@@ -175,11 +175,16 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
 
             if self.args.confidence_projection:
                 confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
-                padding_length = self.args.max_answer_length-confidence.size(1)
+                padding_length = self.args.max_answer_length - confidence.size(1)
                 confidence = confidence.squeeze(-1)
                 confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
+
+                # do sigmoid before projection (kind of a normalization)
+                confidence = F.sigmoid(confidence)
+                # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
                 confidence = self.confidence_projection(confidence)
                 confidence = F.sigmoid(confidence)
+
 
             else:
                 confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
@@ -187,6 +192,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 lengths = torch.sum(mask_ans, -1)
                 confidence = F.sigmoid(confidence)
                 confidence = confidence.squeeze(-1)
+                # confidence of sentence is the sum of confidence of each token
                 confidence = torch.sum(confidence, -1) / lengths.float()
 
             #####
@@ -237,10 +243,31 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                            context_attention,
                                            question_attention, context_indices, question_indices, oov_to_limited_idx)
 
-            probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
-            confidence, targets = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), pad_idx=pad_idx)
-            penultimate_scores, targets = mask(answer_indices[:, 1:].contiguous(), penultimate_scores.contiguous(), pad_idx=pad_idx)
-            confidence = F.sigmoid(confidence)
+            #####  #process each batch before flattening it out
+            if self.args.confidence_projection:
+                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+                padding_length = self.args.max_answer_length - confidence.size(1)
+                confidence = confidence.squeeze(-1)
+                confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
+
+                # do sigmoid before projection (kind of a normalization)
+                confidence = F.sigmoid(confidence)
+                # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
+                confidence = self.confidence_projection(confidence)
+                confidence = F.sigmoid(confidence)
+
+            else:
+                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+                mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+                lengths = torch.sum(mask_ans, -1)
+                confidence = F.sigmoid(confidence)
+                confidence = confidence.squeeze(-1)
+                # confidence of sentence is the sum of confidence of each token
+                confidence = torch.sum(confidence, -1) / lengths.float()
+
+            probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), squash=False, pad_idx=pad_idx)
+            # confidence, targets = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), pad_idx=pad_idx)
+            penultimate_scores, targets = mask(answer_indices[:, 1:].contiguous(), penultimate_scores.contiguous(), squash=False, pad_idx=pad_idx)
 
             return probs, confidence, penultimate_scores
 

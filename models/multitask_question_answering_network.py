@@ -54,6 +54,14 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
 
             self.elmo = Elmo(options_file, weight_file, num_output_representations=1, requires_grad=False, dropout=0).to(self.device)
             self.project_elmo = Feedforward(elmo_dim, args.dimension)
+
+        if self.args.confidence_mode == 'rnn':
+            self.confidence_encoder = PackedLSTM(1, args.dimension,
+                                                 batch_first=True, bidirectional=True, num_layers=1, dropout=0)
+            self.confidence_hidden_projection = nn.Linear(args.dimension/2 * 2 * 1, 1)
+
+        elif self.args.confidence_mode == 'linear':
+            self.confidence_projection = nn.Linear(args.max_answer_length, 1)
      
         self.bilstm_before_coattention = PackedLSTM(args.dimension,  args.dimension,
             batch_first=True, bidirectional=True, num_layers=1, dropout=0)
@@ -84,7 +92,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         self.out = nn.Linear(args.dimension, self.generative_vocab_size)
 
         self.confidence = nn.Linear(self.generative_vocab_size, 1)
-        self.confidence_projection = nn.Linear(args.max_answer_length, 1)
+
 
         self.dropout = nn.Dropout(0.4)
 
@@ -172,8 +180,19 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                            question_attention, context_indices, question_indices,  oov_to_limited_idx)
 
             #####  #process each batch before flattening it out
+            if self.args.confidence_mode == 'rnn':
+                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+                mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+                lengths = torch.sum(mask_ans, -1)
+                outputs, (h, c) = self.confidence_encoder(confidence, lengths) # h of shape (num_layers * num_directions, batch, hidden_size)
+                batch = h.size(1)
+                h_flattened = torch.transpose(h, 0, 1).contiguous().view(batch, -1)
 
-            if self.args.confidence_projection:
+                confidence = self.confidence_hidden_projection(h_flattened)
+                confidence = F.sigmoid(confidence)
+
+
+            elif self.args.confidence_mode == 'linear':
                 confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
                 padding_length = self.args.max_answer_length - confidence.size(1)
                 confidence = confidence.squeeze(-1)
@@ -186,13 +205,13 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 confidence = F.sigmoid(confidence)
 
 
-            else:
+            elif self.args.confidence_mode == 'mean':
                 confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
                 mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
                 lengths = torch.sum(mask_ans, -1)
                 confidence = F.sigmoid(confidence)
                 confidence = confidence.squeeze(-1)
-                # confidence of sentence is the sum of confidence of each token
+                # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
                 confidence = torch.sum(confidence, -1) / lengths.float()
 
             #####

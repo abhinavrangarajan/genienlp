@@ -232,7 +232,7 @@ def get_args():
                     'transformer_layers', 'rnn_layers', 'transformer_hidden',
                     'dimension', 'load', 'max_val_context_length', 'val_batch_size',
                     'transformer_heads', 'max_output_length', 'max_generative_vocab',
-                    'lower', 'cove', 'intermediate_cove', 'elmo', 'lambd', 'max_answer_length', 'confidence_projection']
+                    'lower', 'cove', 'intermediate_cove', 'elmo', 'lambd', 'max_answer_length', 'confidence_mode']
         for r in retrieve:
             if r in config:
                 setattr(args, r, config[r])

@@ -17,8 +17,7 @@ from allennlp.common.file_utils import cached_path
 options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
 weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
 
-
-from .common import positional_encodings_like, INF, EPSILON, TransformerEncoder, TransformerDecoder, PackedLSTM, LSTMDecoderAttention, LSTMDecoder, Embedding, Feedforward, mask, CoattentiveLayer, make_confidence
+from .common import *
 
 
 class MultitaskQuestionAnsweringNetwork(nn.Module):
@@ -180,40 +179,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                            question_attention, context_indices, question_indices,  oov_to_limited_idx)
 
             #####  #process each batch before flattening it out
-            if self.args.confidence_mode == 'rnn':
-                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
-                mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
-                lengths = torch.sum(mask_ans, -1)
-                outputs, (h, c) = self.confidence_encoder(confidence, lengths) # h of shape (num_layers * num_directions, batch, hidden_size)
-                batch = h.size(1)
-                h_flattened = torch.transpose(h, 0, 1).contiguous().view(batch, -1)
-
-                confidence = self.confidence_hidden_projection(h_flattened)
-                confidence = F.sigmoid(confidence)
-
-
-            elif self.args.confidence_mode == 'linear':
-                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
-                padding_length = self.args.max_answer_length - confidence.size(1)
-                confidence = confidence.squeeze(-1)
-                confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
-
-                # do sigmoid before projection (kind of a normalization)
-                confidence = F.sigmoid(confidence)
-                # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
-                confidence = self.confidence_projection(confidence)
-                confidence = F.sigmoid(confidence)
-
-
-            elif self.args.confidence_mode == 'mean':
-                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
-                mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
-                lengths = torch.sum(mask_ans, -1)
-                confidence = F.sigmoid(confidence)
-                confidence = confidence.squeeze(-1)
-                # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
-                confidence = torch.sum(confidence, -1) / lengths.float()
-
+            confidence = process_confidence_scores(self, confidence, answer_indices)
             #####
 
             probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
@@ -263,29 +229,10 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                            question_attention, context_indices, question_indices, oov_to_limited_idx)
 
             #####  #process each batch before flattening it out
-            if self.args.confidence_projection:
-                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
-                padding_length = self.args.max_answer_length - confidence.size(1)
-                confidence = confidence.squeeze(-1)
-                confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
-
-                # do sigmoid before projection (kind of a normalization)
-                confidence = F.sigmoid(confidence)
-                # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
-                confidence = self.confidence_projection(confidence)
-                confidence = F.sigmoid(confidence)
-
-            else:
-                confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
-                mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
-                lengths = torch.sum(mask_ans, -1)
-                confidence = F.sigmoid(confidence)
-                confidence = confidence.squeeze(-1)
-                # confidence of sentence is the sum of confidence of each token
-                confidence = torch.sum(confidence, -1) / lengths.float()
+            confidence = process_confidence_scores(confidence, self)
+            #####
 
             probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), squash=False, pad_idx=pad_idx)
-            # confidence, targets = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), pad_idx=pad_idx)
             penultimate_scores, targets = mask(answer_indices[:, 1:].contiguous(), penultimate_scores.contiguous(), squash=False, pad_idx=pad_idx)
 
             return probs, confidence, penultimate_scores

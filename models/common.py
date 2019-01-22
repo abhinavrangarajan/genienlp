@@ -43,6 +43,47 @@ class LSTMDecoder(nn.Module):
         return input, (h_1, c_1)
 
 
+def process_confidence_scores(self, confidence, answer_indices):
+
+    pad_idx = self.field.decoder_stoi[self.field.pad_token]
+
+    if self.args.confidence_mode == 'rnn':
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+        lengths = torch.sum(mask_ans, -1)
+        outputs, (h, c) = self.confidence_encoder(confidence, lengths) # h of shape (num_layers * num_directions, batch, hidden_size)
+        batch = h.size(1)
+        h_flattened = torch.transpose(h, 0, 1).contiguous().view(batch, -1)
+
+        confidence = self.confidence_hidden_projection(h_flattened)
+        confidence = F.sigmoid(confidence)
+
+
+    elif conf_mode == 'linear':
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        padding_length = self.args.max_answer_length - confidence.size(1)
+        confidence = confidence.squeeze(-1)
+        confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
+
+        # do sigmoid before projection (kind of a normalization)
+        confidence = F.sigmoid(confidence)
+        # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
+        confidence = self.confidence_projection(confidence)
+        confidence = F.sigmoid(confidence)
+
+
+    elif conf_mode == 'mean':
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+        lengths = torch.sum(mask_ans, -1)
+        confidence = F.sigmoid(confidence)
+        confidence = confidence.squeeze(-1)
+        # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
+        confidence = torch.sum(confidence, -1) / lengths.float()
+
+    return confidence
+
+
 def positional_encodings_like(x, t=None):
     if t is None:
         positions = torch.arange(0., x.size(1))

@@ -91,7 +91,7 @@ def parse():
     parser.add_argument('--lambd', default=0, type=float, help='cofidence loss regularization strength')
     parser.add_argument('--baseline', action='store_true', default=False, help='whether to train model without confidence branch')
     parser.add_argument('--budget', default=0.3, type=float, help='the budget for how often the network can get hints')
-    parser.add_argument('--confidence_projection', action='store_true', help='whether to project confidence scores for each sequence or not')
+    parser.add_argument('--confidence_mode', type=str, default='mean', help="how to calculate confidence score for each sentence from its token's scores")
     parser.add_argument('--lambd_clipping', '-lc', type=float, nargs=2, metavar=('min_val', 'max_val'), help='provides lower and upper bound for lambda')
 
     parser.add_argument('--ood_dataset', type=str, default='binary_sent', help='out-of-distribution dataset')

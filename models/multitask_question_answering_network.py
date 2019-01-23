@@ -229,7 +229,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                            question_attention, context_indices, question_indices, oov_to_limited_idx)
 
             #####  #process each batch before flattening it out
-            confidence = process_confidence_scores(confidence, self)
+            confidence = process_confidence_scores(self, confidence, answer_indices)
             #####
 
             probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), squash=False, pad_idx=pad_idx)

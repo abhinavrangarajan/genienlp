@@ -119,21 +119,20 @@ def run(args, field, val_sets, model):
             elif mode == 'baseline':
                 epsilon = args.epsilon
                 # https://arxiv.org/abs/1610.02136
-                pred = torch.max(pred.data, 1)[0]
-                pred = torch.mean(pred)
+                pred = torch.max(pred.data, 2)[0]
+                pred = torch.mean(pred, 1)
                 pred = pred.cpu().numpy()
                 out.append(pred)
 
             elif mode == 'temperature':
-                T = args.T
-                penultimate_scores /= T
+                penultimate_scores /= args.T
                 pred = F.softmax(penultimate_scores, dim=-1)
-                pred = torch.max(pred.data, 1)[0]
-                pred = torch.mean(pred)
+                pred = torch.max(pred.data, 2)[0]
+                pred = torch.mean(pred, 1)
                 pred = pred.cpu().numpy()
                 out.append(pred)
 
-
+            out = out[0]
             for ss in out:
                 scores.append(float(ss))
 

@@ -116,6 +116,10 @@ def run(args, field, val_sets, model):
                 confidence = confidence.data.cpu().numpy()
                 out.append(confidence)
 
+            elif mode == 'likelihood':
+                nll = - torch.mean(torch.max(torch.log(pred), 2)[0], 1)
+                out.append(nll)
+
             elif mode == 'baseline':
                 epsilon = args.epsilon
                 # https://arxiv.org/abs/1610.02136

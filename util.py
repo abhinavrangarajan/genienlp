@@ -16,12 +16,14 @@ def get_context_question(ex, context, question, field):
 
 
 def preprocess_examples(args, tasks, splits, field, logger=None, train=True):
-    min_length = 1
+    # min_length = 1
+    # accept blank responses for ODE
+    min_length = -1
     max_context_length = args.max_train_context_length if train else args.max_val_context_length
     is_too_long = lambda ex: (len(ex.answer) > args.max_answer_length or
         len(ex.context)>max_context_length)
     is_too_short = lambda ex: (len(ex.answer) < min_length or
-        len(ex.context)<min_length)
+        len(ex.context) < min_length)
 
     for task, s in zip(tasks, splits):
         if logger is not None:

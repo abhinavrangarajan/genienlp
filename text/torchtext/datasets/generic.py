@@ -177,7 +177,7 @@ class TranslationDataset(translation.TranslationDataset):
                     if src_line != '' and trg_line != '':
                         context = src_line
                         answer = trg_line
-                        context_question = get_context_question(context, question) 
+                        context_question = get_context_question(context, question)
                         examples.append(data.Example.fromlist([context, question, answer, CONTEXT_SPECIAL, QUESTION_SPECIAL, context_question], fields, tokenize=tokenize))
                         if subsample is not None and len(examples) >= subsample:
                             break
@@ -199,6 +199,89 @@ class IWSLT(TranslationDataset, CQA, translation.IWSLT):
 
 def split_tokenize(x):
     return x.split()
+
+
+
+class Programs(translation.TranslationDataset):
+
+    fields = ['answer']
+
+    def __init__(self, path, field, subsample=None, tokenize=None, **kwargs):
+        """Create a TranslationDataset given paths and fields.
+
+        Arguments:
+            path: Common prefix of paths to the data files for both languages.
+            exts: A tuple containing the extension to path for each language.
+            fields$: fields for handling all columns
+            Remaining keyword arguments: Passed to the constructor of
+                data.Dataset.
+        """
+        fields = [(x, field) for x in self.fields]
+        cache_name = os.path.join(os.path.dirname(path), '.cache', os.path.basename(path), str(subsample))
+
+        skip_cache_bool = kwargs.pop('skip_cache_bool')
+        if os.path.exists(cache_name) and not skip_cache_bool:
+            print(f'Loading cached data from {cache_name}')
+            examples = torch.load(cache_name)
+        else:
+            trg_path = os.path.expanduser(path)
+
+            examples = []
+            with open(trg_path) as trg_file:
+                for trg_line in trg_file:
+                    trg_line = trg_line.strip()
+                    if trg_line != '':
+                        answer = trg_line
+                        examples.append(data.Example.fromlist([answer], fields, tokenize=tokenize))
+                        if subsample is not None and len(examples) >= subsample:
+                            break
+
+
+            os.makedirs(os.path.dirname(cache_name), exist_ok=True)
+            print(f'Caching data to {cache_name}')
+            torch.save(examples, cache_name)
+        super(translation.TranslationDataset, self).__init__(examples, fields, **kwargs)
+
+    @classmethod
+    def splits(self, path, fields, root='.data', **kwargs):
+
+        """Create dataset objects for splits of the ThingTalk dataset.
+        Arguments:
+            root: Root dataset storage directory. Default is '.data'.
+            exts: A tuple containing the extension to path for each language.
+            fields: A tuple containing the fields that will be used for data
+                in each language.
+            train: The prefix of the train data. Default: 'train'.
+            validation: The prefix of the validation data. Default: 'val'.
+            test: The prefix of the test data. Default: 'test'.
+            Remaining keyword arguments: Passed to the splits method of
+                Dataset.
+        """
+        # cls.dirname = cls.base_dirname.format(exts[0][1:], exts[1][1:])
+        # check = os.path.join(root, self.name, self.dirname)
+        # path = check
+        #
+        # if train is not None:
+        #     train = '.'.join([train, cls.dirname])
+        # if validation is not None:
+        #     validation = '.'.join([validation, cls.dirname])
+        # if test is not None:
+        #     test = '.'.join([test, cls.dirname])
+
+
+
+        # train_data = None if train is None else cls(
+        #     os.path.join(path, train), exts, fields, tokenize=split_tokenize, **kwargs)
+        # val_data = None if validation is None else cls(
+        #     os.path.join(path, validation), exts, fields, tokenize=split_tokenize, **kwargs)
+        # test_data = None if test is None else cls(
+        #     os.path.join(path, test), exts, fields, tokenize=split_tokenize, **kwargs)
+        # return tuple(d for d in (train_data, val_data, test_data)
+        #              if d is not None)
+
+
+        data = self(path, fields, tokenize=split_tokenize, **kwargs)
+        return data
 
 
 class Almond(TranslationDataset, CQA):

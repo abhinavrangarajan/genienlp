@@ -27,8 +27,8 @@ def parse():
     parser = ArgumentParser()
     parser.add_argument('--root', default='./decaNLP', type=str, help='root directory for data, results, embeddings, code, etc.')
     parser.add_argument('--data', default='.data/', type=str, help='where to load data from.')
-    parser.add_argument('--save', default='results', type=str, help='where to save results.')
-    parser.add_argument('--embeddings', default='.embeddings', type=str, help='where to save embeddings.')
+    parser.add_argument('--save', default='results/', type=str, help='where to save results.')
+    parser.add_argument('--embeddings', default='.embeddings/', type=str, help='where to save embeddings.')
     parser.add_argument('--name', default='', type=str, help='name of the experiment; if blank, a name is automatically generated from the arguments')
 
     parser.add_argument('--train_tasks', nargs='+', type=str, help='tasks to use for training', required=True)
@@ -93,6 +93,8 @@ def parse():
     parser.add_argument('--lr_rate', default=0.001, type=float, help='initial_learning_rate')
     parser.add_argument('--use_bleu_loss', action='store_true', help='whether to use differentiable BLEU loss or not')
     parser.add_argument('--loss_switch', default=0.666, type=float, help='switch to BLEU loss after certain iterations controlled by this ratio')
+
+    parser.add_argument('--programs', type=str, help='where to load generated programs from the language model')
 
 
 

@@ -96,6 +96,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         answer, answer_lengths, answer_limited       = batch.answer,   batch.answer_lengths,   batch.answer_limited
         oov_to_limited_idx, limited_idx_to_full_idx  = batch.oov_to_limited_idx, batch.limited_idx_to_full_idx
 
+
         def map_to_full(x):
             return limited_idx_to_full_idx[x]
         self.map_to_full = map_to_full

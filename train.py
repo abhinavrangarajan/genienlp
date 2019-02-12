@@ -82,6 +82,10 @@ def prepare_data(args, field, logger):
         if args.vocab_tasks is not None and task in args.vocab_tasks:
             vocab_sets.extend(split)
 
+    kwargs = {}
+    kwargs['skip_cache_bool'] = args.skip_cache_bool
+    aux_data = torchtext.datasets.generic.Programs.splits(args.programs, fields=FIELD, root=args.programs, **kwargs)
+
     for task, s in zip(args.train_tasks, train_sets):
         for ex in s.examples[:10]:
             print('examples***:', [token.strip() for token in ex.context])
@@ -109,7 +113,7 @@ def prepare_data(args, field, logger):
     logger.info('Preprocessing validation data')
     preprocess_examples(args, args.val_tasks, val_sets, FIELD, logger, train=args.val_filter)
 
-    return FIELD, train_sets, val_sets
+    return FIELD, train_sets, val_sets, aux_data
 
 
 def to_iter(args, world_size, val_batch_size, data, device, train=True, token_testing=False, sort=None):
@@ -146,8 +150,9 @@ def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, wri
 
 
 def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_size=1, 
-    log_every=10, val_every=100, save_every=1000, rounds=False, val_iters=[], writer=None, start_iteration=1, rnd=1):
+    log_every=10, val_every=100, save_every=1000, rounds=False, aux_data=None, val_iters=[], writer=None, start_iteration=1, rnd=1):
     """main training function"""
+
 
     logger = log(rank) 
     local_loss, num_examples, len_contexts, len_answers, iteration = 0, 0, 0, 0, start_iteration
@@ -156,6 +161,8 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
     local_train_metric_dict = {}
 
     train_iters = [(task, iter(train_iter)) for task, train_iter in train_iters]
+
+
     while True:
 
         # For some number of rounds, we 'jump start' some subset of the tasks
@@ -175,6 +182,46 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                 continue
             task_iteration = 1
             for batch in train_iter:
+
+                answer, answer_lengths, answer_limited    = batch.answer,   batch.answer_lengths,   batch.answer_limited
+
+                max_length = max(answer_lengths)
+                batch_size = answer.size(0)
+
+                ood_indices = [i for i, ans in enumerate(answer) if (answer_lengths[i]==3 and field.decoder_itos[answer[i][1]].lower()=='flag')]
+                ind_indices = [i for i in range(batch_size) if i not in ood_indices]
+
+                num_aux_examples = len(aux_data.examples)
+                for i in ood_indices:
+                    iterations = 0
+                    while iterations <= 10:
+                        iterations += 1
+                        program_ind = np.random.randint(0, num_aux_examples, 1)
+                        program = aux_data.examples[np.asscalar(program_ind)].answer
+
+                        if len(program) + 2 <= max_length:
+                            program_processed = [field.decoder_stoi['<init>']] + [field.decoder_stoi.get(token, field.decoder_stoi[' UNK ']) for token in program] + [field.decoder_stoi['<eos>']]
+                            length = len(program_processed)
+
+                            original_answer = answer[i]
+                            len_diff = len(original_answer) - len(program_processed)
+                            program_processed += [field.decoder_stoi['<pad>']] * len_diff
+
+                            answer[i] = torch.Tensor(program_processed)
+                            answer_lengths[i] = torch.Tensor(length)
+                            answer_limited[i] = torch.Tensor(program_processed)
+                            break
+
+                    if iterations==11:
+                        if len(ind_indices):
+                            ind_index = np.random.choice(ind_indices)
+                            answer[i] = answer[ind_index]
+                            answer_lengths[i] = answer_lengths[ind_index]
+                            answer_limited[i] = answer_limited[ind_index]
+                        else:
+                            continue
+
+
                 if not args.resume or iteration > start_iteration:
                     task_progress = f'{task_iteration}/{task_iterations}:' if task_iterations is not None else ''
                     round_progress = f'round_{rnd}:' if rounds else ''
@@ -284,7 +331,7 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
 def run(args, run_args, rank=0, world_size=1):
     device = set_seed(args, rank=rank)
     logger = initialize_logger(args, rank)
-    field, train_sets, val_sets, save_dict = run_args
+    field, train_sets, val_sets, aux_data, save_dict = run_args
 
     logger.start = time.time()
 
@@ -293,6 +340,7 @@ def run(args, run_args, rank=0, world_size=1):
                       for name, x, tok in zip(args.train_tasks, train_sets, args.train_batch_tokens)]
     val_iters = [(name, to_iter(args, world_size, tok, x, device, train=False, token_testing=args.token_testing, sort=False if 'sql' in name else None))
                     for name, x, tok in zip(args.val_tasks, val_sets, args.val_batch_size)]
+    # aux_iters = [('aux', to_iter(args, world_size, args.train_batch_tokens, aux_data, device, token_testing=args.token_testing))]
 
     if hasattr(args, 'tensorboard') and args.tensorboard:
         logger.info(f'Initializing Writer')
@@ -314,7 +362,7 @@ def run(args, run_args, rank=0, world_size=1):
             start_iteration = int(os.path.splitext(os.path.basename(args.load))[0].split('_')[1])
 
     logger.info(f'Begin Training')
-    train(args, model, opt, train_iters, args.train_iterations, field, val_iters=val_iters, 
+    train(args, model, opt, train_iters, args.train_iterations, field, aux_data=aux_data, val_iters=val_iters,
         rank=rank, world_size=world_size, 
         log_every=args.log_every, val_every=args.val_every, rounds=len(train_iters)>1,
         writer=writer if rank==0 else None, save_every=args.save_every, start_iteration=start_iteration)
@@ -362,9 +410,9 @@ def main():
         logger.info(f'Loading field from {os.path.join(args.save, args.load)}')
         save_dict = torch.load(os.path.join(args.save, args.load))
         field = save_dict['field']
-    field, train_sets, val_sets = prepare_data(args, field, logger)
+    field, train_sets, val_sets, aux_data = prepare_data(args, field, logger)
 
-    run_args = (field, train_sets, val_sets, save_dict)
+    run_args = (field, train_sets, val_sets, aux_data, save_dict)
     if len(args.devices) > 1:
         logger.info(f'Multiprocessing')
         mp = Multiprocess(run, args)

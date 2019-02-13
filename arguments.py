@@ -96,8 +96,6 @@ def parse():
 
     parser.add_argument('--programs', type=str, help='where to load generated programs from the language model')
 
-
-
     args = parser.parse_args()
     if args.model is None:
         args.model = 'mcqa'

@@ -183,7 +183,10 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
             task_iteration = 1
             for batch in train_iter:
 
-                answer, answer_lengths, answer_limited    = batch.answer,   batch.answer_lengths,   batch.answer_limited
+#####################################################################################################################################
+#####################################################################################################################################
+
+                answer, answer_lengths, answer_limited    = deepcopy(batch.answer),   deepcopy(batch.answer_lengths),   deepcopy(batch.answer_limited)
 
                 max_length = max(answer_lengths)
                 batch_size = answer.size(0)
@@ -208,7 +211,7 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                             program_processed += [field.decoder_stoi['<pad>']] * len_diff
 
                             answer[i] = torch.Tensor(program_processed)
-                            answer_lengths[i] = torch.Tensor(length)
+                            answer_lengths[i] = length
                             answer_limited[i] = torch.Tensor(program_processed)
                             break
 
@@ -221,6 +224,10 @@ def train(args, model, opt, train_iters, train_iterations, field, rank=0, world_
                         else:
                             continue
 
+
+                batch.answer,   batch.answer_lengths,   batch.answer_limited = answer, answer_lengths, answer_limited
+#####################################################################################################################################
+#####################################################################################################################################
 
                 if not args.resume or iteration > start_iteration:
                     task_progress = f'{task_iteration}/{task_iterations}:' if task_iterations is not None else ''
@@ -340,7 +347,6 @@ def run(args, run_args, rank=0, world_size=1):
                       for name, x, tok in zip(args.train_tasks, train_sets, args.train_batch_tokens)]
     val_iters = [(name, to_iter(args, world_size, tok, x, device, train=False, token_testing=args.token_testing, sort=False if 'sql' in name else None))
                     for name, x, tok in zip(args.val_tasks, val_sets, args.val_batch_size)]
-    # aux_iters = [('aux', to_iter(args, world_size, args.train_batch_tokens, aux_data, device, token_testing=args.token_testing))]
 
     if hasattr(args, 'tensorboard') and args.tensorboard:
         logger.info(f'Initializing Writer')

@@ -44,10 +44,10 @@ class LSTMDecoder(nn.Module):
 
 
 def process_confidence_scores(model, confidence, answer_indices):
-
+    conf_mode = model.args.confidence_mode
     pad_idx = model.field.decoder_stoi[model.field.pad_token]
 
-    if model.args.confidence_mode == 'rnn':
+    if conf_mode == 'rnn':
         confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
         mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
         lengths = torch.sum(mask_ans, -1)

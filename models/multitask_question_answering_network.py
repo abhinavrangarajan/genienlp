@@ -12,7 +12,7 @@ from modules import expectedBLEU, expectedMultiBleu, matrixBLEU
 
 from cove import MTLSTM
 from allennlp.modules.elmo import Elmo, batch_to_ids
-from .common import positional_encodings_like, INF, EPSILON, TransformerEncoder, TransformerDecoder, PackedLSTM, LSTMDecoderAttention, LSTMDecoder, Embedding, Feedforward, mask, CoattentiveLayer
+from .common import *
 
 
 class MultitaskQuestionAnsweringNetwork(nn.Module):
@@ -94,8 +94,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
 
 
     def forward(self, batch, iteration, lambd=0, predict=False):
-        context, context_lengths, context_limited    = batch.context,  batch.context_lengths,  batch.context_limited
-        question, question_lengths, question_limited = batch.question, batch.question_lengths, batch.question_limited
+        context, context_lengths, context_limited, context_elmo    = batch.context,  batch.context_lengths,  batch.context_limited, batch.context_elmo
+        question, question_lengths, question_limited, question_elmo = batch.question, batch.question_lengths, batch.question_limited, batch.question_elmo
         answer, answer_lengths, answer_limited       = batch.answer,   batch.answer_lengths,   batch.answer_limited
         oov_to_limited_idx, limited_idx_to_full_idx  = batch.oov_to_limited_idx, batch.limited_idx_to_full_idx
 
@@ -166,6 +166,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             #####  #process each batch before flattening it out
             confidence = process_confidence_scores(self, confidence, answer_indices)
             #####
+
+            probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
 
             # Make sure we don't have any numerical instability
             probs = torch.clamp(probs, 0. + EPSILON, 1. - EPSILON)

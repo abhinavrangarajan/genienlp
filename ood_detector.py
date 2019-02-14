@@ -41,8 +41,7 @@ def get_all_splits(args, new_vocab):
 
 
 def prepare_data(args, FIELD):
-    new_vocab = torchtext.data.SimpleReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>',
-                                                     lower=args.lower, include_lengths=True)
+    new_vocab = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
     splits = get_all_splits(args, new_vocab)
     new_vocab.build_vocab(*splits)
     print(f'Vocabulary has {len(FIELD.vocab)} tokens from training')
@@ -140,18 +139,12 @@ def run(args, field, val_sets, model):
             for ss in out:
                 scores.append(float(ss))
 
-
-
         # answers *****
 
         answers = []
         for batch_idx, batch in enumerate(it):
             if task == 'almond':
-                setattr(field, 'use_revtok', False)
-                setattr(field, 'tokenize', tokenizer)
-                a = field.reverse_almond(batch.answer.data)
-                setattr(field, 'use_revtok', True)
-                setattr(field, 'tokenize', 'revtok')
+                a = field.reverse(batch.answer.data, detokenize=lambda x: ' '.join(x))
             else:
                 a = field.reverse(batch.answer.data)
             for aa in a:
@@ -161,10 +154,8 @@ def run(args, field, val_sets, model):
                     aa = 0
                 answers.append(aa)
 
-
         ind_scores = [score for ans, score in zip(answers, scores) if ans==1]
         ood_scores = [score for ans, score in zip(answers, scores) if ans==0]
-
 
         #######
         scores = np.array(scores)

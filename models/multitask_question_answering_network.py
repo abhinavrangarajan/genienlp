@@ -12,12 +12,7 @@ from modules import expectedBLEU, expectedMultiBleu, matrixBLEU
 
 from cove import MTLSTM
 from allennlp.modules.elmo import Elmo, batch_to_ids
-from allennlp.common.file_utils import cached_path
-
-options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
-weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
-
-from .common import *
+from .common import positional_encodings_like, INF, EPSILON, TransformerEncoder, TransformerDecoder, PackedLSTM, LSTMDecoderAttention, LSTMDecoder, Embedding, Feedforward, mask, CoattentiveLayer
 
 
 class MultitaskQuestionAnsweringNetwork(nn.Module):
@@ -32,36 +27,34 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         def dp(args):
             return args.dropout_ratio if args.rnn_layers > 1 else 0.
 
-        self.encoder_embeddings = Embedding(field, args.dimension, 
-            dropout=args.dropout_ratio, project=not (args.cove or args.elmo))
+        if self.args.glove_and_char:
+        
+            self.encoder_embeddings = Embedding(field, args.dimension, 
+                dropout=args.dropout_ratio, project=not args.cove)
+    
+            if self.args.cove or self.args.intermediate_cove:
+                self.cove = MTLSTM(model_cache=args.embeddings, layer0=args.intermediate_cove, layer1=args.cove)
+                cove_params = get_trainable_params(self.cove) 
+                for p in cove_params:
+                    p.requires_grad = False
+                cove_dim = int(args.intermediate_cove) * 600 + int(args.cove) * 600 + 400 # the last 400 is for GloVe and char n-gram embeddings
+                self.project_cove = Feedforward(cove_dim, args.dimension)
+
+        if -1 not in self.args.elmo:
+            options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+            weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+            self.elmo = Elmo(options_file, weight_file, 3, dropout=0.0, do_layer_norm=False)
+            elmo_params = get_trainable_params(self.elmo)
+            for p in elmo_params:
+                p.requires_grad = False
+            elmo_dim = 1024 * len(self.args.elmo)
+            self.project_elmo = Feedforward(elmo_dim, args.dimension)
+            if self.args.glove_and_char:
+                self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
+        
         self.decoder_embeddings = Embedding(field, args.dimension, 
             dropout=args.dropout_ratio, project=True)
 
-        if self.args.cove or self.args.intermediate_cove:
-            self.cove = MTLSTM(model_cache=args.embeddings, layer0=args.intermediate_cove, layer1=args.cove)
-            cove_params = get_trainable_params(self.cove) 
-            for p in cove_params:
-                p.requires_grad = False
-            cove_dim = int(args.intermediate_cove) * 600 + int(args.cove) * 600 + 400 # the last 400 is for GloVe and char n-gram embeddings
-            self.project_cove = Feedforward(cove_dim, args.dimension)
-
-        elif args.elmo:
-
-            with open(cached_path(options_file), 'r') as fin:
-                self._options = json.load(fin)
-            elmo_dim = self._options['lstm']['projection_dim'] * 2 + 400
-
-            self.elmo = Elmo(options_file, weight_file, num_output_representations=1, requires_grad=False, dropout=0).to(self.device)
-            self.project_elmo = Feedforward(elmo_dim, args.dimension)
-
-        if self.args.confidence_mode == 'rnn':
-            self.confidence_encoder = PackedLSTM(1, args.dimension,
-                                                 batch_first=True, bidirectional=True, num_layers=1, dropout=0)
-            self.confidence_hidden_projection = nn.Linear(int(args.dimension/2 * 2 * 1), 1)
-
-        elif self.args.confidence_mode == 'linear':
-            self.confidence_projection = nn.Linear(args.max_answer_length, 1)
-     
         self.bilstm_before_coattention = PackedLSTM(args.dimension,  args.dimension,
             batch_first=True, bidirectional=True, num_layers=1, dropout=0)
         self.coattention = CoattentiveLayer(args.dimension, dropout=0.3)
@@ -99,6 +92,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         self.encoder_embeddings.set_embeddings(embeddings)
         self.decoder_embeddings.set_embeddings(embeddings)
 
+
     def forward(self, batch, iteration, lambd=0, predict=False):
         context, context_lengths, context_limited    = batch.context,  batch.context_lengths,  batch.context_limited
         question, question_lengths, question_limited = batch.question, batch.question_lengths, batch.question_limited
@@ -108,34 +102,25 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         def map_to_full(x):
             return limited_idx_to_full_idx[x]
         self.map_to_full = map_to_full
-        context_embedded = self.encoder_embeddings(context)
-        question_embedded = self.encoder_embeddings(question)
 
-        if self.args.cove:
-            context_embedded = self.project_cove(torch.cat([self.cove(context_embedded[:, :, -300:], context_lengths), context_embedded], -1).detach())
-            question_embedded = self.project_cove(torch.cat([self.cove(question_embedded[:, :, -300:], question_lengths), question_embedded], -1).detach())
+        if -1 not in self.args.elmo:
+            def elmo(z, layers, device):
+                e = self.elmo(batch_to_ids(z).to(device))['elmo_representations']
+                return torch.cat([e[x] for x in layers], -1)
+            context_elmo =  self.project_elmo(elmo(context_elmo, self.args.elmo, context.device).detach())
+            question_elmo = self.project_elmo(elmo(question_elmo, self.args.elmo, question.device).detach())
 
-        elif self.args.elmo:
-            context_list = []
-            for b in range(context.size(0)):
-                lc = [self.field.decoder_itos[i] if i < self.args.max_generative_vocab else self.field.decoder_itos[0] for i in context[b, :]]
-                if lc[0] == self.field.decoder_itos[2]:
-                    lc[0] = '<S>'
-                if lc[-1] == self.field.decoder_itos[3]:
-                    lc[-1] = '</S>'
-                context_list.append(lc)
-            question_list = []
-            for b in range(question.size(0)):
-                lq = [self.field.decoder_itos[i] if i < self.args.max_generative_vocab else self.field.decoder_itos[0] for i in question[b, :]]
-                if lq[0] == self.field.decoder_itos[2]:
-                    lq[0] = '<S>'
-                if lq[-1] == self.field.decoder_itos[3]:
-                    lq[-1] = '</S>'
-                question_list.append(lq)
-
-            context_embedded = self.project_elmo(torch.cat([self.elmo(batch_to_ids(context_list).to(self.device))['elmo_representations'][0], context_embedded], -1).detach())
-            question_embedded = self.project_elmo(torch.cat([self.elmo(batch_to_ids(question_list).to(self.device))['elmo_representations'][0], question_embedded], -1).detach())
-
+        if self.args.glove_and_char:
+            context_embedded = self.encoder_embeddings(context)
+            question_embedded = self.encoder_embeddings(question)
+            if self.args.cove:
+                context_embedded = self.project_cove(torch.cat([self.cove(context_embedded[:, :, -300:], context_lengths), context_embedded], -1).detach())
+                question_embedded = self.project_cove(torch.cat([self.cove(question_embedded[:, :, -300:], question_lengths), question_embedded], -1).detach())
+            if -1 not in self.args.elmo:
+                context_embedded = self.project_embeddings(torch.cat([context_embedded, context_elmo], -1))
+                question_embedded = self.project_embeddings(torch.cat([question_embedded, question_elmo], -1))
+        else:
+            context_embedded, question_embedded = context_elmo, question_elmo 
 
         context_encoded = self.bilstm_before_coattention(context_embedded, context_lengths)[0]
         question_encoded = self.bilstm_before_coattention(question_embedded, question_lengths)[0]
@@ -181,8 +166,6 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             #####  #process each batch before flattening it out
             confidence = process_confidence_scores(self, confidence, answer_indices)
             #####
-
-            probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
 
             # Make sure we don't have any numerical instability
             probs = torch.clamp(probs, 0. + EPSILON, 1. - EPSILON)

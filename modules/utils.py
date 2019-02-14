@@ -24,7 +24,7 @@ class SoftmaxWithTemperature:
         """
         formula: softmax(x/temperature)
         """
-        self.temperature  = temperature
+        self.temperature = temperature
         self.softmax = torch.nn.Softmax()
 
     def __call__(self, x, temperature=None):

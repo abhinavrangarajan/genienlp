@@ -15,7 +15,6 @@ import models
 from text.torchtext.data.utils import get_tokenizer
 
 
-
 def get_all_splits(args, new_vocab):
     splits = []
     for task in args.tasks:
@@ -34,7 +33,7 @@ def get_all_splits(args, new_vocab):
 
 
 def prepare_data(args, FIELD):
-    new_vocab = torchtext.data.SimpleReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+    new_vocab = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
     splits = get_all_splits(args, new_vocab)
     new_vocab.build_vocab(*splits)
     print(f'Vocabulary has {len(FIELD.vocab)} tokens from training')
@@ -83,6 +82,7 @@ def run(args, field, val_sets, model):
     print(f'{args.model} has {num_param:,} parameters')
     model.to(device)
 
+    decaScore = []
     model.eval()
     with torch.no_grad():
         for task, it in iters:
@@ -99,20 +99,29 @@ def run(args, field, val_sets, model):
                 ids_file_name = answer_file_name.replace('gold', 'ids')
             if os.path.exists(prediction_file_name):
                 print('** ', prediction_file_name, ' already exists -- this is where predictions are stored **')
+                if args.overwrite:
+                    print('**** overwriting ', prediction_file_name, ' ****')
             if os.path.exists(answer_file_name):
                 print('** ', answer_file_name, ' already exists -- this is where ground truth answers are stored **')
+                if args.overwrite:
+                    print('**** overwriting ', answer_file_name, ' ****')
             if os.path.exists(results_file_name):
                 print('** ', results_file_name, ' already exists -- this is where metrics are stored **')
-                with open(results_file_name) as results_file:
-                  for l in results_file:
-                      print(l)
-                if not 'schema' in task and not args.overwrite_predictions and args.silent:
+                if args.overwrite:
+                    print('**** overwriting ', results_file_name, ' ****')
+                else:
+                    with open(results_file_name) as results_file:
+                        if not args.silent:
+                            for l in results_file:
+                                print(l)
+                        metrics = json.loads(results_file.readlines()[0])
+                        decaScore.append(metrics[args.task_to_metric[task]])
                     continue
+
             for x in [prediction_file_name, answer_file_name, results_file_name]:
                 os.makedirs(os.path.dirname(x), exist_ok=True)
     
-            if not os.path.exists(prediction_file_name) or args.overwrite_predictions:
-                print('** overwriting old results with new predictions **')
+            if not os.path.exists(prediction_file_name) or args.overwrite:
                 with open(prediction_file_name, 'w') as prediction_file:
                     predictions = []
                     ids = []
@@ -120,11 +129,7 @@ def run(args, field, val_sets, model):
                         _, p = model(batch, iteration=1, predict=True)
 
                         if task == 'almond':
-                            setattr(field, 'use_revtok', False)
-                            setattr(field, 'tokenize', tokenizer)
-                            p = field.reverse_almond(p)
-                            setattr(field, 'use_revtok', True)
-                            setattr(field, 'tokenize', get_tokenizer('revtok'))
+                            p = field.reverse(p, detokenize=lambda x: ' '.join(x))
                         else:
                             p = field.reverse(p)
 
@@ -135,24 +140,25 @@ def run(args, field, val_sets, model):
                                 ids.append(it.dataset.q_ids[int(batch.squad_id[i])])
                             prediction_file.write(json.dumps(pp) + '\n')
                             predictions.append(pp) 
+                if 'sql' in task:
+                    with open(ids_file_name, 'w') as id_file:
+                        for i in ids:
+                            id_file.write(json.dumps(i) + '\n')
+                if 'squad' in task:
+                    with open(ids_file_name, 'w') as id_file:
+                        for i in ids:
+                            id_file.write(i + '\n')
             else:
                 with open(prediction_file_name) as prediction_file:
                     predictions = [x.strip() for x in prediction_file.readlines()] 
-    
-            if 'sql' in task:
-                with open(ids_file_name, 'w') as id_file:
-                    for i in ids:
-                        id_file.write(json.dumps(i) + '\n')
-
-            if 'squad' in task:
-                with open(ids_file_name, 'w') as id_file:
-                    for i in ids:
-                        id_file.write(i + '\n')
+                if 'sql' in task or 'squad' in task:
+                    with open(ids_file_name) as id_file:
+                        ids = [int(x.strip()) for x in id_file.readlines()]
    
             def from_all_answers(an):
                 return [it.dataset.all_answers[sid] for sid in an.tolist()] 
     
-            if not os.path.exists(answer_file_name):
+            if not os.path.exists(answer_file_name) or args.overwrite:
                 with open(answer_file_name, 'w') as answer_file:
                     answers = []
                     for batch_idx, batch in enumerate(it):
@@ -164,11 +170,7 @@ def run(args, field, val_sets, model):
                             a = from_all_answers(batch.woz_id.data.cpu())
                         else:
                             if task == 'almond':
-                                setattr(field, 'use_revtok', False)
-                                setattr(field, 'tokenize', tokenizer)
-                                a = field.reverse_almond(batch.answer.data)
-                                setattr(field, 'use_revtok', True)
-                                setattr(field, 'tokenize', 'revtok')
+                                a = field.reverse(batch.answer.data, detokenize=lambda x: ' '.join(x))
                             else:
                                 a = field.reverse(batch.answer.data)
                         for aa in a:
@@ -179,7 +181,7 @@ def run(args, field, val_sets, model):
                     answers = [json.loads(x.strip()) for x in answer_file.readlines()] 
     
             if len(answers) > 0:
-                if not os.path.exists(results_file_name) or args.overwrite_predictions:
+                if not os.path.exists(results_file_name) or args.overwrite:
                     metrics, answers = compute_metrics(predictions, answers,
                                            bleu='iwslt' in task or 'multi30k' in task or 'almond' in task,
                                            dialogue='woz' in task,
@@ -196,7 +198,15 @@ def run(args, field, val_sets, model):
                 if not args.silent:
                     for i, (p, a) in enumerate(zip(predictions, answers)):
                         print(f'Prediction {i+1}: {p}\nAnswer {i+1}: {a}\n')
-                print(metrics)
+                    print(metrics)
+                decaScore.append(metrics[args.task_to_metric[task]])
+
+    print(f'Evaluated Tasks:\n')
+    for i, (task, _) in enumerate(iters):
+        print(f'{task}: {decaScore[i]}')
+    print(f'-------------------')
+    print(f'DecaScore:  {sum(decaScore)}\n')
+    print(f'\nSummary: | {sum(decaScore)} | {" | ".join([str(x) for x in decaScore])} |\n')
 
 
 def get_args():
@@ -211,7 +221,7 @@ def get_args():
     parser.add_argument('--checkpoint_name')
     parser.add_argument('--bleu', action='store_true', help='whether to use the bleu metric (always on for iwslt)')
     parser.add_argument('--rouge', action='store_true', help='whether to use the bleu metric (always on for cnn, dailymail, and cnn_dailymail)')
-    parser.add_argument('--overwrite_predictions', action='store_true', help='whether to overwrite previously written predictions')
+    parser.add_argument('--overwrite', action='store_true', help='whether to overwrite previously written predictions')
     parser.add_argument('--silent', action='store_true', help='whether to print predictions to stdout')
 
     parser.add_argument('--skip_cache', action='store_true', dest='skip_cache_bool', help='whether use exisiting cached splits or generate new ones')
@@ -225,13 +235,18 @@ def get_args():
         retrieve = ['model', 
                     'transformer_layers', 'rnn_layers', 'transformer_hidden', 
                     'dimension', 'load', 'max_val_context_length', 'val_batch_size', 
-                    'transformer_heads', 'max_output_length', 'max_generative_vocab', 
-                    'lower', 'cove', 'intermediate_cove', 'elmo']
+                    'transformer_heads', 'max_output_length', 'max_generative_vocab',
+                    'lower', 'cove', 'intermediate_cove', 'elmo', 'glove_and_char']
+
         for r in retrieve:
             if r in config:
                 setattr(args, r,  config[r])
             elif 'cove' in r or 'elmo' in r:
                 setattr(args, r, False)
+            elif 'elmo' in r:
+                setattr(args, r, [-1])
+            elif 'glove_and_char' in r:
+                setattr(args, r, True)
             else:
                 setattr(args, r, None)
         args.dropout_ratio = 0.0
@@ -250,10 +265,11 @@ def get_args():
         'schema': 'em'
     }
 
-    if os.path.exists(os.path.join(args.path, 'process_0.log')):
-        args.best_checkpoint = get_best(args)
-    else:
+    if not args.checkpoint_name is None:
         args.best_checkpoint = os.path.join(args.path, args.checkpoint_name)
+    else:
+        assert os.path.exists(os.path.join(args.path, 'process_0.log'))
+        args.best_checkpoint = get_best(args)
            
     return args
 
@@ -302,7 +318,6 @@ if __name__ == '__main__':
 
     print(f'Loading from {args.best_checkpoint}')
 
-    # save_dict = torch.load(args.best_checkpoint)
     if torch.cuda.is_available():
         save_dict = torch.load(args.best_checkpoint)
     else:

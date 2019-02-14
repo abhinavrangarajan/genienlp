@@ -55,7 +55,7 @@ def prepare_data(args, field, logger):
 
     if field is None: 
         logger.info(f'Constructing field')
-        FIELD = torchtext.data.SimpleReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+        FIELD = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
     else:
         FIELD = field
 
@@ -86,7 +86,7 @@ def prepare_data(args, field, logger):
 
     for task, s in zip(args.train_tasks, train_sets):
         for ex in s.examples[:10]:
-            print('examples***:', ex.context)
+            print('examples***:', [token.strip() for token in ex.context])
 
     if args.load is None:
         logger.info(f'Getting pretrained word vectors')
@@ -127,8 +127,11 @@ def to_iter(args, world_size, val_batch_size, data, device, train=True, token_te
 
 
 def get_learning_rate(i, args):
-    return 0.1 * 10 / math.sqrt(args.dimension) * min(
+    transformer_lr = 1. / math.sqrt(args.dimension) * min(
         1 / math.sqrt(i), i / (args.warmup * math.sqrt(args.warmup)))
+    if 'adam' not in args.optimizer.lower():
+        transformer_lr = transformer_lr * math.sqrt(args.dimension * args.warmup) * args.sgd_lr
+    return transformer_lr
 
 
 def step(model, batch, opt, iteration, field, task, lr=None, lambd=0, grad_clip=None, writer=None, it=None):
@@ -373,10 +376,13 @@ def init_model(args, field, logger, world_size, device):
 
 def init_opt(args, model):
     opt = None
-    if args.transformer_lr:
-        opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(0.9, 0.98), eps=1e-9)
+    if 'adam' in args.optimizer.lower():
+        if args.transformer_lr:
+            opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(0.9, 0.98), eps=1e-9)
+        else:
+            opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(args.beta0, 0.999))
     else:
-        opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(args.beta0, 0.999))
+        opt = torch.optim.SGD(model.params, lr=args.sgd_lr) 
     return opt
 
 

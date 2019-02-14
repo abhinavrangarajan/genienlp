@@ -154,7 +154,7 @@ class Field(RawField):
         self.pad_token = pad_token if self.sequential else None
         self.pad_first = pad_first
 
-    def preprocess(self, x):
+    def preprocess(self, x, tokenize=None):
         """Load a single example using this field, tokenizing if necessary.
 
         If the input is a Python 2 `str`, it will be converted to Unicode
@@ -165,7 +165,9 @@ class Field(RawField):
                 isinstance(x, six.text_type)):
             x = Pipeline(lambda s: six.text_type(s, encoding='utf-8'))(x)
         if self.sequential and isinstance(x, six.text_type):
-            x = self.tokenize(x.rstrip('\n'))
+            if tokenize is None:
+                tokenize = self.tokenize
+            x = tokenize(x.rstrip('\n'))
         if self.lower:
             x = Pipeline(six.text_type.lower)(x)
         if self.preprocessing is not None:
@@ -327,14 +329,14 @@ class Field(RawField):
                     return lim_idx
                
                 lim_arr = [[limited_idx(x) for x in ex] for ex in arr]
-                arr = [[self.vocab.stoi[x] for x in ex] for ex in arr]
+                num = [[self.vocab.stoi[x] for x in ex] for ex in arr]
                         
 #                arr = [[self.vocab.stoi[x] for x in ex] for ex in arr]
             else:
-                arr = [self.vocab.stoi[x] for x in arr]
+                num = [self.vocab.stoi[x] for x in arr]
 
             if self.postprocessing is not None:
-                arr = self.postprocessing(arr, self.vocab, train)
+                num = self.postprocessing(num, self.vocab, train)
         else:
             if self.tensor_type not in self.tensor_types:
                 raise ValueError(
@@ -347,25 +349,25 @@ class Field(RawField):
             # the data is sequential, since it's unclear how to coerce padding tokens
             # to a numeric type.
             if not self.sequential:
-                arr = [numericalization_func(x) if isinstance(x, six.string_types)
+                num = [numericalization_func(x) if isinstance(x, six.string_types)
                        else x for x in arr]
             if self.postprocessing is not None:
-                arr = self.postprocessing(arr, None, train)
+                num = self.postprocessing(num, None, train)
 
-        arr = self.tensor_type(arr)
+        num = self.tensor_type(num)
         lim_arr = self.tensor_type(lim_arr)
         if self.sequential and not self.batch_first:
-            arr.t_()
+            num.t_()
             lim_arr.t_()
         if self.sequential:
-            arr = arr.contiguous()
+            num = num.contiguous()
             lim_arr = lim_arr.contiguous()
-        arr = arr.to(device)
+        num = num.to(device)
         lim_arr = lim_arr.to(device)
 #            if self.include_lengths:
 #                lengths = lengths.cuda(device)
         if self.include_lengths:
-            return arr, lengths, lim_arr
+            return num, lengths, lim_arr, arr
         return arr
 
 
@@ -380,15 +382,19 @@ class ReversibleField(Field):
             kwargs['tokenize'] = 'revtok'
         if 'unk_token' not in kwargs:
             kwargs['unk_token'] = ' UNK '
-        super(ReversibleField, self).__init__(**kwargs)
-
-    def reverse(self, batch, limited=False):
         if self.use_revtok:
             try:
                 import revtok
             except ImportError:
                 print("Please install revtok.")
                 raise
+            self.detokenize = revtok.detokenize
+        else:
+            self.detokenize = None
+        super(ReversibleField, self).__init__(**kwargs)
+
+    def reverse(self, batch, detokenize=None, limited=False):
+        
         if not self.batch_first:
             batch = batch.t()
         with torch.cuda.device_of(batch):
@@ -409,9 +415,12 @@ class ReversibleField(Field):
             return tok not in (self.init_token, self.pad_token)
 
         batch = [filter(filter_special, ex) for ex in batch]
-        if self.use_revtok:
-            return [revtok.detokenize(ex) for ex in batch]
-        return [''.join(ex) for ex in batch]
+        if detokenize is None:
+            detokenize = self.detokenize
+        if detokenize is not None:
+            return [detokenize(ex) for ex in batch]
+        else:
+            return [''.join(ex) for ex in batch]
 
 
 class SubwordField(ReversibleField):

@@ -212,14 +212,33 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             scaled_p_vocab = torch.cat([scaled_p_vocab, buff], dim=buff.dim()-1)
 
         # p_context_ptr
+        p_context_ptr = torch.zeros_like(scaled_p_vocab)
+        p_context_ptr.scatter_(scaled_p_vocab.dim()-1, context_indices.unsqueeze(1).expand_as(context_attention),
+                               context_attention)
+        scaled_p_context_ptr = (context_question_switches).expand_as(scaled_p_vocab) * p_context_ptr
+        # scaled_p_vocab += (context_question_switches * (1 - vocab_pointer_switches)).expand_as(scaled_p_vocab) * p_context_ptr
+
         scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, context_indices.unsqueeze(1).expand_as(context_attention), 
             (context_question_switches * (1 - vocab_pointer_switches)).expand_as(context_attention) * context_attention)
 
         # p_question_ptr
+        p_question_ptr = torch.zeros_like(scaled_p_vocab)
+        p_question_ptr.scatter_(scaled_p_vocab.dim()-1, question_indices.unsqueeze(1).expand_as(question_attention),
+                               question_attention)
+        scaled_p_question_ptr = ((1 - context_question_switches)).expand_as(scaled_p_vocab) * p_question_ptr
+        # scaled_p_vocab += ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(scaled_p_vocab) * p_question_ptr
+
         scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, question_indices.unsqueeze(1).expand_as(question_attention), 
             ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(question_attention) * question_attention)
 
-        return scaled_p_vocab
+        if self.args.use_maxmargin_loss:
+            min_score = torch.min(scores, dim=2)[0]
+            max_score = torch.max(scores, dim=2)[0]
+            range_score = max_score - min_score
+            return (scaled_p_context_ptr + scaled_p_question_ptr) * range_score.unsqueeze(2) + min_score.unsqueeze(2) + scores
+
+        else:
+            return scaled_p_vocab
 
 
     def greedy(self, self_attended_context, context, question, context_indices, question_indices, oov_to_limited_idx, rnn_state=None):

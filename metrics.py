@@ -103,7 +103,7 @@ def computeLFEM(greedy, answer, args):
     text_answers = []
     for idx, (g, ex) in enumerate(zip(greedy, answer)):
         count += 1
-        text_answers.append([ex['answer'].lower()])
+        text_answers.append([ex['answer'] if args.preserve_case else ex['answer'].lower()])
         try:
             lf = to_lf(g, ex['table'])
             gt = ex['sql']
@@ -111,7 +111,7 @@ def computeLFEM(greedy, answer, args):
             lower_conds = []
             for c in conds:
                 lc = c
-                lc[2] = str(lc[2]).lower()
+                lc[2] = str(lc[2]) if args.preserve_case else str(lc[2]).lower()
                 lower_conds.append(lc)
             gt['conds'] = lower_conds
             correct += lf == gt
@@ -120,10 +120,10 @@ def computeLFEM(greedy, answer, args):
     return correct / count * 100, text_answers
 
 
-def score(answer, gold):
+def score(answer, gold, args):
     if len(gold) > 0:
-        gold = set.union(*[simplify(g) for g in gold])
-    answer = simplify(answer)
+        gold = set.union(*[simplify(g, args) for g in gold])
+    answer = simplify(answer, args)
     tp, tn, sys_pos, real_pos = 0, 0, 0, 0
     if answer == gold:
         if not ('unanswerable' in gold and len(gold) == 1):
@@ -137,15 +137,16 @@ def score(answer, gold):
     return np.array([tp, tn, sys_pos, real_pos])
 
 
-def simplify(answer):
-    return set(''.join(c for c in t if c not in string.punctuation) for t in answer.strip().lower().split()) - {'the', 'a', 'an', 'and', ''}
+def simplify(answer, args):
+    answer_splitted = answer.strip().split() if args.preserve_case else answer.strip().lower().split()
+    return set(''.join(c for c in t if c not in string.punctuation) for t in answer_splitted) - {'the', 'a', 'an', 'and', ''}
      
 
 # http://nlp.cs.washington.edu/zeroshot/evaluate.py
-def computeCF1(greedy, answer):
+def computeCF1(greedy, answer, args):
     scores = np.zeros(4)
     for g, a in zip(greedy, answer):
-        scores += score(g, a)
+        scores += score(g, a, args)
     tp, tn, sys_pos, real_pos = scores.tolist()
     total = len(answer)
     if tp == 0:
@@ -447,7 +448,7 @@ def compute_metrics(greedy, answer, rouge=False, bleu=False, corpus_f1=False, lo
         metric_values.append(device_accuracy)
 
     if corpus_f1:
-        corpus_f1, precision, recall = computeCF1(norm_greedy, norm_answer)
+        corpus_f1, precision, recall = computeCF1(norm_greedy, norm_answer, args)
         metric_keys += ['corpus_f1', 'precision', 'recall']
         metric_values += [corpus_f1, precision, recall]
     metric_dict = collections.OrderedDict(list(zip(metric_keys, metric_values)))

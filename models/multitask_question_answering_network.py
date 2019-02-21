@@ -215,6 +215,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             size[-1] = effective_vocab_size - self.generative_vocab_size
             buff = scaled_p_vocab.new_full(size, EPSILON)
             scaled_p_vocab = torch.cat([scaled_p_vocab, buff], dim=buff.dim()-1)
+            scores = torch.cat([scores, buff], dim=buff.dim()-1)
 
         # p_context_ptr
         p_context_ptr = torch.zeros_like(scaled_p_vocab)

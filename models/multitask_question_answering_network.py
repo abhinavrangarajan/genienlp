@@ -238,6 +238,9 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(question_attention) * question_attention)
 
         if self.args.use_maxmargin_loss:
+            #min_score = torch.min(scores, dim=2)[0]
+            #max_score = torch.max(scores, dim=2)[0]
+            #range_score = max_score - min_score
 
             return self.mm_alpha * (scaled_p_context_ptr + scaled_p_question_ptr) + self.mm_beta * scores + self.mm_bias
 

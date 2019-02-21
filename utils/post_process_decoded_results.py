@@ -37,7 +37,6 @@ parser.add_argument('--input_sentences', default='./test/test.en-tt.en', type=st
 parser.add_argument('--gold_program', default='./test/almond.gold.txt', type=str)
 parser.add_argument('--predicted_program', default='./test/almond.txt', type=str)
 parser.add_argument('--output_file', default='./test/out_file', type=str)
-parser.add_argument('--preserve_case', action='store_false', dest='lower', help='whether to preserve casing for all text')
 
 args = parser.parse_args()
 
@@ -110,11 +109,11 @@ def find_indices(ref, shuf):
 
     with open(ref, 'r') as f_ref:
         for line in f_ref:
-            line = line[:-1] if args.preserve_case else line[:-1].lower()
+            line = line[:-1].lower()
             ref_list.append(line)
     with open(shuf, 'r') as f_shuf:
         for line in f_shuf:
-            line = line[1:-2].replace(r'\"', '"') if args.preserve_case else line[1:-2].replace(r'\"', '"').lower()
+            line = line[1:-2].replace(r'\"', '"').lower()
             shuf_list.append(line)
 
     indices = []

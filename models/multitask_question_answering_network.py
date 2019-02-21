@@ -86,6 +86,11 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
 
         self.dropout = nn.Dropout(0.4)
 
+        if self.args.use_maxmargin_loss:
+            self.mm_alpha = torch.nn.parameter.Parameter(torch.ones((1, 1, 1)), requires_grad=True)
+            self.mm_beta = torch.nn.parameter.Parameter(torch.ones((1, 1, 1)), requires_grad=True)
+            self.mm_bias = torch.nn.parameter.Parameter(torch.zeros((1, 1, 1)), requires_grad=True)
+
     def set_embeddings(self, embeddings):
         self.encoder_embeddings.set_embeddings(embeddings)
         self.decoder_embeddings.set_embeddings(embeddings)
@@ -232,10 +237,11 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(question_attention) * question_attention)
 
         if self.args.use_maxmargin_loss:
-            min_score = torch.min(scores, dim=2)[0]
-            max_score = torch.max(scores, dim=2)[0]
-            range_score = max_score - min_score
-            return (scaled_p_context_ptr + scaled_p_question_ptr) * range_score.unsqueeze(2) + min_score.unsqueeze(2) + scores
+            #min_score = torch.min(scores, dim=2)[0]
+            #max_score = torch.max(scores, dim=2)[0]
+            #range_score = max_score - min_score
+
+            return self.mm_alpha * (scaled_p_context_ptr + scaled_p_question_ptr) + self.mm_beta * scores + self.mm_bias
 
         else:
             return scaled_p_vocab

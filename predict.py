@@ -265,13 +265,14 @@ def get_args():
         'schema': 'em'
     }
 
+    args.best_checkpoint = None
     if not args.checkpoint_name is None:
         args.best_checkpoint = os.path.join(args.path, args.checkpoint_name)
     else:
         assert os.path.exists(os.path.join(args.path, 'process_0.log'))
 
         ignore_list = []
-        while True:
+        for _ in range(20):
 
             best_it = get_best(args, ignore_list)
             args.best_checkpoint = os.path.join(args.path, f'iteration_{int(best_it)}.pth')
@@ -279,6 +280,11 @@ def get_args():
                 break
             else:
                 ignore_list.append(best_it)
+
+        if not args.best_checkpoint:
+            print('Best model is not among the first 20 saved checkpoints.')
+            print('please specify the model you want to evaluate using --checkpoint_name')
+            raise ValueError()
            
     return args
 

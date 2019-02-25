@@ -269,12 +269,21 @@ def get_args():
         args.best_checkpoint = os.path.join(args.path, args.checkpoint_name)
     else:
         assert os.path.exists(os.path.join(args.path, 'process_0.log'))
-        args.best_checkpoint = get_best(args)
+
+        ignore_list = []
+        while True:
+
+            best_it = get_best(args, ignore_list)
+            args.best_checkpoint = os.path.join(args.path, f'iteration_{int(best_it)}.pth')
+            if os.path.exists(args.best_checkpoint):
+                break
+            else:
+                ignore_list.append(best_it)
            
     return args
 
 
-def get_best(args):
+def get_best(args, ignore_list):
     with open(os.path.join(args.path, 'config.json')) as f:
         save_every = json.load(f)['save_every']
     
@@ -299,12 +308,12 @@ def get_best(args):
                 deca_scores[it][metric] = score
             else:
                 deca_scores[it] = {'deca': score, metric: score}
-            if deca_scores[it]['deca'] > best_score:
+            if deca_scores[it]['deca'] > best_score and it not in ignore_list:
                 best_score = deca_scores[it]['deca']
                 best_it = it
-    print(best_it)
-    print(best_score)
-    return os.path.join(args.path, f'iteration_{int(best_it)}.pth')
+    print(f'best model according to deca score: {best_it}')
+    print(f'best model score: {best_score}')
+    return best_it
 
 
 if __name__ == '__main__':

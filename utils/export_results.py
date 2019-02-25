@@ -47,9 +47,13 @@ def run():
     result = command.communicate()[0]
     print(type(result))
 
-    result = eval(result[len('OrderedDcit'):])
+    try:
+        result = eval(result[len('OrderedDict'):])
+        results_dict = {k:str("{0:.2f}".format(v) + '%') for (k,v) in result if k in METRICS}
+    except:
+        results_dict = {k:None for k in METRICS}
 
-    results_dict = {k:v for (k,v) in result if k in METRICS}
+
 
     if not os.path.exists(args.out_file):
         with open(args.out_file, 'w+') as f_out:

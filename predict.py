@@ -246,7 +246,7 @@ def get_args():
         'zre': 'corpus_f1',
         'schema': 'em'}
 
-    if os.path.exists(os.path.join(args.path, 'process_0.log')):
+    if os.path.exists(os.path.join(args.path, 'process_0.log')) and not args.checkpoint_name:
         args.best_checkpoint = get_best(args)
     else:
         args.best_checkpoint = os.path.join(args.path, args.checkpoint_name)

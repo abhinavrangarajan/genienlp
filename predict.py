@@ -57,8 +57,8 @@ def to_iter(data, bs, device):
     Iterator = torchtext.data.Iterator
     it = Iterator(data, batch_size=bs, 
        device=device, batch_size_fn=None, 
-       train=False, repeat=False, sort=None, 
-       shuffle=None, reverse=False)
+       train=False, repeat=False, sort=False,
+       shuffle=False, reverse=False)
 
     return it
 
@@ -152,7 +152,7 @@ def run(args, field, val_sets, model):
             def from_all_answers(an):
                 return [it.dataset.all_answers[sid] for sid in an.tolist()] 
     
-            if not os.path.exists(answer_file_name):
+            if not os.path.exists(answer_file_name) and args.overwrite_predictions:
                 with open(answer_file_name, 'w') as answer_file:
                     answers = []
                     for batch_idx, batch in enumerate(it):

@@ -161,13 +161,13 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         condensed_context, _ = self.context_bilstm_after_coattention(context_summary, context_lengths)
         self_attended_context = self.self_attentive_encoder_context(condensed_context, padding=context_padding)
         final_context, (context_rnn_h, context_rnn_c) = self.bilstm_context(self_attended_context[-1], context_lengths)
-        context_rnn_state = [self.reshape_rnn_state(x) for x in (context_rnn_h, context_rnn_c)]
+        context_rnn_state = [reshape_rnn_state(x) for x in (context_rnn_h, context_rnn_c)]
 
         question_summary = torch.cat([coattended_question, question_encoded, question_embedded], -1)
         condensed_question, _ = self.question_bilstm_after_coattention(question_summary, question_lengths)
         self_attended_question = self.self_attentive_encoder_question(condensed_question, padding=question_padding)
         final_question, (question_rnn_h, question_rnn_c) = self.bilstm_question(self_attended_question[-1], question_lengths)
-        question_rnn_state = [self.reshape_rnn_state(x) for x in (question_rnn_h, question_rnn_c)]
+        question_rnn_state = [reshape_rnn_state(x) for x in (question_rnn_h, question_rnn_c)]
 
         context_indices = context_limited if context_limited is not None else context
         question_indices = question_limited if question_limited is not None else question
@@ -214,14 +214,17 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return loss, None
 
         else:
-            return None, self.greedy(self_attended_context, final_context, final_question, 
+
+            if self.args.beam_search:
+                return None, self.beam_search(self_attended_context, final_context, final_question,
                 context_indices, question_indices,
                 oov_to_limited_idx, rnn_state=context_rnn_state).data
- 
-    def reshape_rnn_state(self, h):
-        return h.view(h.size(0) // 2, 2, h.size(1), h.size(2)) \
-                .transpose(1, 2).contiguous() \
-                .view(h.size(0) // 2, h.size(1), h.size(2) * 2).contiguous()
+
+            else:
+                return None, self.greedy(self_attended_context, final_context, final_question,
+                    context_indices, question_indices,
+                    oov_to_limited_idx, rnn_state=context_rnn_state).data
+
 
     def probs(self, generator, outputs, vocab_pointer_switches, context_question_switches, 
         context_attention, question_attention, 
@@ -250,6 +253,151 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(question_attention) * question_attention)
 
         return scaled_p_vocab
+
+
+
+    def beam_search(self, self_attended_context, context, question, context_indices, question_indices, oov_to_limited_idx, rnn_state=None):
+
+        K = self.args.K
+        B, TC, C = context.size()
+        T = self.args.max_output_length
+
+        vocab_size = self.generative_vocab_size + len(oov_to_limited_idx)
+
+        pos_index = (torch.LongTensor(range(B)) * K).view(-1, 1)
+
+        num_layers = len(self.self_attentive_decoder.layers)
+
+        self_attended_context = [inflate(tensor, K, 0) for tensor in self_attended_context]
+        rnn_state = [inflate(state, K, 1) for state in rnn_state]
+        context = inflate(context, K, 0)
+        question = inflate(question, K, 0)
+        context_indices = inflate(context_indices, K, 0)
+        question_indices = inflate(question_indices, K, 0)
+
+        ################
+        pad_idx = self.field.decoder_stoi[self.field.pad_token]
+        context_padding = context_indices.data == pad_idx
+        question_padding = question_indices.data == pad_idx
+
+        self.dual_ptr_rnn_decoder.applyMasks(context_padding, question_padding)
+        ################
+
+        hiddens = [self_attended_context[0].new_zeros((B*K, T, C))
+           for l in range(num_layers+1)]
+
+        hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])
+
+        sequence_scores = torch.Tensor(B * K, 1)
+        sequence_scores.fill_(-float('inf'))
+        sequence_scores.index_fill_(0, torch.LongTensor([i * K for i in range(0, B)]), 0.0)
+
+
+        stored_outputs = list()
+        stored_scores = list()
+        stored_predecessors = list()
+        stored_emitted_symbols = list()
+        stored_hidden = list()
+
+        rnn_output, context_alignment, question_alignment = None, None, None
+        input = self_attended_context[-1].new_full((B*K, 1), self.field.vocab.stoi['<init>'], dtype=torch.long)
+
+        for t in range(T):
+            input_var = self.decoder_embeddings(input, [1]*B*K)
+
+            hiddens[0][:, t] = hiddens[0][:, t] + (math.sqrt(self.self_attentive_decoder.d_model) * input_var).squeeze(1)
+
+            for l in range(num_layers):
+                hiddens[l + 1][:, t] = self.self_attentive_decoder.layers[l].feedforward(
+                    self.self_attentive_decoder.layers[l].attention(
+                    self.self_attentive_decoder.layers[l].selfattn(hiddens[l][:, t], hiddens[l][:, :t + 1], hiddens[l][:, :t + 1])
+                  , self_attended_context[l], self_attended_context[l]))
+
+            decoder_outputs = self.dual_ptr_rnn_decoder(hiddens[-1][:, t].unsqueeze(1),
+                context, question,
+                context_alignment=context_alignment, question_alignment=question_alignment,
+                hidden=rnn_state, output=rnn_output)
+
+            rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
+            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                context_attention, question_attention,
+                context_indices, question_indices,
+                oov_to_limited_idx)
+
+            log_softmax_output = torch.log(probs)
+            stored_outputs.append(probs.squeeze(1))
+
+            sequence_scores = inflate(sequence_scores, vocab_size, 1)
+            sequence_scores += log_softmax_output.squeeze(1)
+            scores, candidates = sequence_scores.view(B, -1).topk(K, dim=1)
+
+            input = (candidates % vocab_size).view(B*K, 1)
+            sequence_scores = scores.view(B*K, 1)
+
+            # update params for next step
+            predecessors = (candidates / vocab_size + pos_index.expand_as(candidates)).view(B*K, 1)
+            for l in range(num_layers+1):
+                hiddens[l][:, t] = hiddens[l][:, t].index_select(0, predecessors.squeeze(1))
+
+            hiddens_for_t = [hiddens[l][:, t] for l in range(num_layers+1)]
+            concat_hiddens = torch.stack(hiddens_for_t, dim=0)  # (layer, b*k, hidden)
+
+
+            # update stored values
+            stored_scores.append(sequence_scores.clone())
+
+            eos_indices = input.data.eq(self.field.vocab.stoi['<eos>'])
+            if eos_indices.nonzero().dim() > 0:
+                sequence_scores.data.masked_fill_(eos_indices, -float('inf'))
+
+            stored_predecessors.append(predecessors)
+            stored_emitted_symbols.append(input)
+            stored_hidden.append(concat_hiddens)
+
+        # assert sizes are correct
+        assert len(stored_outputs) == len(stored_hidden) == len(stored_predecessors) == len(stored_emitted_symbols) == len(stored_scores) == T
+        assert list(stored_outputs[0].size()) == [B*K, vocab_size]
+        assert list(stored_hidden[0].size()) == [num_layers+1, B*K, C]
+        assert list(stored_predecessors[0].size()) == [B*K, 1]
+        assert list(stored_emitted_symbols[0].size()) == [B*K, 1]
+        assert list(stored_scores[0].size()) == [B*K, 1]
+
+
+        # do backtracking
+        output, h_t, h_n, score, length, p = backtrack(stored_outputs, stored_hidden, stored_predecessors, stored_emitted_symbols, stored_scores, B, C, K, T, self.field.vocab.stoi['<eos>'])
+        p = torch.cat(p, dim=-1)
+        length = torch.tensor(length)
+
+        # Assert output sizes are correct
+        assert len(output) == len(h_t) == T
+        assert list(output[0].size()) == [B, K, vocab_size]
+        assert list(h_t[0].size()) == [num_layers+1, B, K, C]
+        assert list(h_n.size()) == [num_layers+1, B, K, C]
+        assert list(score.size()) == list(length.size()) == [B, K]
+        assert list(p.size()) == [B, K, T]
+
+
+        # choose sequence with highest score
+
+        outs = context.new_full((B, T), self.field.decoder_stoi['<pad>'], dtype=torch.long)
+
+        sequences = torch.stack([seq[0] for seq in p], dim=0)
+        lengths = torch.tensor([seq_len[0] for seq_len in length])
+
+        assert list(sequences.size()) == [B, T]
+        assert list(lengths.size()) == [B]
+
+        def generate_mask(length, max_len):
+            assert length.dim() == 1
+            mask = torch.arange(max_len).expand(length.size(0), max_len) < length.unsqueeze(1)
+            return mask
+
+        mask = generate_mask(lengths, T)
+        outs = torch.where(mask, sequences, outs)
+
+        assert list(outs.size()) == [B, T]
+
+        return outs
 
 
     def greedy(self, self_attended_context, context, question, context_indices, question_indices, oov_to_limited_idx, rnn_state=None):
@@ -290,6 +438,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if eos_yet.all():
                 break
         return outs
+
+
 
 
 

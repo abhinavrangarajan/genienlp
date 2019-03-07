@@ -132,17 +132,17 @@ def run(args, field, val_sets, model):
             if 'sql' in task or 'squad' in task:
                 ids_file_name = answer_file_name.replace('gold', 'ids')
             if os.path.exists(prediction_file_name):
-                logger.warning('** ', prediction_file_name, ' already exists -- this is where predictions are stored **')
+                logger.warning(f'** {prediction_file_name} already exists -- this is where predictions are stored **')
                 if args.overwrite:
-                    logger.warning('**** overwriting ', prediction_file_name, ' ****')
+                    logger.warning(f'**** overwriting {prediction_file_name} ****')
             if os.path.exists(answer_file_name):
-                logger.warning('** ', answer_file_name, ' already exists -- this is where ground truth answers are stored **')
+                logger.warning('** {answer_file_name} already exists -- this is where ground truth answers are stored **')
                 if args.overwrite:
-                    logger.warning('**** overwriting ', answer_file_name, ' ****')
+                    logger.warning('**** overwriting {answer_file_name} ****')
             if os.path.exists(results_file_name):
-                logger.warning('** ', results_file_name, ' already exists -- this is where metrics are stored **')
+                logger.warning('** {results_file_name} already exists -- this is where metrics are stored **')
                 if args.overwrite:
-                    logger.warning('**** overwriting ', results_file_name, ' ****')
+                    logger.warning('**** overwriting {results_file_name} ****')
                 else:
                     with open(results_file_name) as results_file:
                         if not args.silent:
@@ -262,6 +262,9 @@ def get_args(argv):
     parser.add_argument('--reverse_task', action='store_true', dest='reverse_task_bool', help='whether to translate english to code or the other way around')
     parser.add_argument('--eval_dir', type=str, default=None, help='use this directory to store eval results')
     parser.add_argument('--cached', default='', type=str, help='where to save cached files')
+
+    parser.add_argument('--beam_search', action='store_true', help='use beam search instead of greedy search during prediction')
+    parser.add_argument('--K', default=4, type=int, help='K for beam search')
 
     args = parser.parse_args(argv[1:])
 

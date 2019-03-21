@@ -131,6 +131,10 @@ def parse(argv):
     parser.add_argument('--small_glove', action='store_true', help='Use glove.6B.50d instead of glove.840B.300d')
     parser.add_argument('--almond_type_embeddings', action='store_true', help='Add type-based word embeddings for Almond task')
 
+    parser.add_argument('--bert_embeddings', action='store_true', help='use bert embeddings')
+    parser.add_argument('--bert_model', type=str, default='bert_12_768_12', help='bert model for obtaining bert embeddings')
+    parser.add_argument('--bert_dataset_name', type=str, default='book_corpus_wiki_en_uncased', help='bert dataset name for obtaining bert embeddings')
+
 
     args = parser.parse_args(argv[1:])
     if args.model is None:

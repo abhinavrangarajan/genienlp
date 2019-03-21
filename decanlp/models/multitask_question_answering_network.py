@@ -45,7 +45,6 @@ from allennlp.modules.elmo import Elmo, batch_to_ids
 
 from .common import *
 
-
 class MultitaskQuestionAnsweringNetwork(nn.Module):
 
     def __init__(self, field, args):
@@ -58,31 +57,42 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         def dp(args):
             return args.dropout_ratio if args.rnn_layers > 1 else 0.
 
-        if self.args.glove_and_char:
+        if args.glove_and_char:
         
             self.encoder_embeddings = Embedding(field, args.dimension, 
                 dropout=args.dropout_ratio, project=not args.cove)
     
-            if self.args.cove or self.args.intermediate_cove:
+            if args.cove or args.intermediate_cove:
                 self.cove = MTLSTM(model_cache=args.embeddings, layer0=args.intermediate_cove, layer1=args.cove)
                 cove_params = get_trainable_params(self.cove) 
                 for p in cove_params:
                     p.requires_grad = False
-                cove_dim = int(args.intermediate_cove) * 600 + int(args.cove) * 600 + 400 # the last 400 is for GloVe and char n-gram embeddings
+                cove_dim = int(args.intermediate_cove) * 600 + int(args.cove) * 600
+                if args.small_glove:
+                    cove_dim += 150 # the last 150 is for small GloVe and char n-gram embeddings
+                else:
+                    cove_dim += 400 # the last 400 is for GloVe and char n-gram embeddings
                 self.project_cove = Feedforward(cove_dim, args.dimension)
 
-        if -1 not in self.args.elmo:
+        if -1 not in args.elmo:
             options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
             weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
             self.elmo = Elmo(options_file, weight_file, 3, dropout=0.0, do_layer_norm=False)
             elmo_params = get_trainable_params(self.elmo)
             for p in elmo_params:
                 p.requires_grad = False
-            elmo_dim = 1024 * len(self.args.elmo)
+            elmo_dim = 1024 * len(args.elmo)
             self.project_elmo = Feedforward(elmo_dim, args.dimension)
-            if self.args.glove_and_char:
+            if args.glove_and_char:
                 self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
-        
+
+        if args.bert_embeddings:
+            self.bert = BertEmbedding_with_space_tokenizer(model=args.bert_model, dataset_name=args.bert_dataset_name, max_seq_length=args.max_train_context_length)
+            bert_dim = 768
+            self.bert_projection = Feedforward(bert_dim, args.dimension)
+            if args.glove_and_char:
+                self.bert_embedding_projection = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
+
         self.decoder_embeddings = Embedding(field, args.dimension, 
             dropout=args.dropout_ratio, project=True)
     
@@ -121,8 +131,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         self.decoder_embeddings.set_embeddings(embeddings)
 
     def forward(self, batch, iteration):
-        context, context_lengths, context_limited, context_elmo    = batch.context,  batch.context_lengths,  batch.context_limited, batch.context_elmo
-        question, question_lengths, question_limited, question_elmo = batch.question, batch.question_lengths, batch.question_limited, batch.question_elmo
+        context, context_lengths, context_limited, context_tokens    = batch.context,  batch.context_lengths,  batch.context_limited, batch.context_elmo
+        question, question_lengths, question_limited, question_tokens = batch.question, batch.question_lengths, batch.question_limited, batch.question_elmo
         answer, answer_lengths, answer_limited       = batch.answer,   batch.answer_lengths,   batch.answer_limited
         oov_to_limited_idx, limited_idx_to_full_idx  = batch.oov_to_limited_idx, batch.limited_idx_to_full_idx
 
@@ -134,8 +144,14 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             def elmo(z, layers, device):
                 e = self.elmo(batch_to_ids(z).to(device))['elmo_representations']
                 return torch.cat([e[x] for x in layers], -1)
-            context_elmo =  self.project_elmo(elmo(context_elmo, self.args.elmo, context.device).detach())
-            question_elmo = self.project_elmo(elmo(question_elmo, self.args.elmo, question.device).detach())
+            context_elmo =  self.project_elmo(elmo(context_tokens, self.args.elmo, context.device).detach())
+            question_elmo = self.project_elmo(elmo(question_tokens, self.args.elmo, question.device).detach())
+
+        if self.args.bert_embeddings:
+            context_bert_embedded = torch.tensor(list(map(lambda x: x[1], self.bert(list(map(lambda x: ' '.join(x), context_tokens))))))
+            question_bert_embedded = torch.tensor(list(map(lambda x: x[1], self.bert(list(map(lambda x: ' '.join(x), question_tokens))))))
+            context_bert = self.bert_projection(context_bert_embedded)
+            question_bert = self.bert_projection(question_bert_embedded)
 
         if self.args.glove_and_char:
             context_embedded = self.encoder_embeddings(context)
@@ -146,8 +162,14 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if -1 not in self.args.elmo:
                 context_embedded = self.project_embeddings(torch.cat([context_embedded, context_elmo], -1))
                 question_embedded = self.project_embeddings(torch.cat([question_embedded, question_elmo], -1))
+            if self.args.bert_embeddings:
+                context_embedded = self.bert_embedding_projection(torch.cat([context_embedded, context_bert], -1))
+                question_embedded = self.bert_embedding_projection(torch.cat([question_embedded, question_bert], -1))
+
+        elif self.args.bert_embeddings:
+            context_embedded, question_embedded = context_bert_embedded, question_bert_embedded
         else:
-            context_embedded, question_embedded = context_elmo, question_elmo 
+            context_embedded, question_embedded = context_elmo, question_elmo
 
         context_encoded = self.bilstm_before_coattention(context_embedded, context_lengths)[0]
         question_encoded = self.bilstm_before_coattention(question_embedded, question_lengths)[0]
@@ -264,8 +286,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         rnn_output, context_alignment, question_alignment = None, None, None
         for t in range(T):
             if t == 0:
-                embedding = self.decoder_embeddings(
-                    self_attended_context[-1].new_full((B, 1), self.field.vocab.stoi['<init>'], dtype=torch.long), [1]*B)
+                embedding = self.decoder_embeddings(self_attended_context[-1].new_full((B, 1), self.field.vocab.stoi['<init>'], dtype=torch.long), [1]*B)
             else:
                 embedding = self.decoder_embeddings(outs[:, t - 1].unsqueeze(1), [1]*B)
             hiddens[0][:, t] = hiddens[0][:, t] + (math.sqrt(self.self_attentive_decoder.d_model) * embedding).squeeze(1)

@@ -41,6 +41,12 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 from torch.nn.utils.rnn import pack_padded_sequence as pack
 
+from gluonnlp.data import BERTTokenizer, BERTSentenceTransform
+from bert_embedding.dataset import BertEmbeddingDataset
+from mxnet.gluon.data import DataLoader
+import mxnet as mx
+from bert_embedding import BertEmbedding
+
 
 INF = 1e10
 EPSILON = 1e-10
@@ -485,3 +491,27 @@ class CoattentiveLayer(nn.Module):
         raw_scores.masked_fill_(padding.unsqueeze(-1).expand_as(raw_scores), -INF)
         return F.softmax(raw_scores, dim=1)
 
+
+class split_on_space(BERTTokenizer):
+
+    def __init__(self, vocab):
+        super().__init__(vocab)
+
+    def __call__(self, sample):
+        return sample.split(' ')
+
+
+class BertEmbedding_with_space_tokenizer(BertEmbedding):
+
+    def __init__(self, ctx=mx.cpu(), model='bert_12_768_12',
+                     dataset_name='book_corpus_wiki_en_uncased',
+                     max_seq_length=25, batch_size=256):
+        super().__init__(ctx, model, dataset_name, max_seq_length, batch_size)
+
+    def data_loader(self, sentences, shuffle=False):
+        tokenizer = split_on_space(self.vocab)
+        transform = BERTSentenceTransform(tokenizer=tokenizer,
+                                          max_seq_length=self.max_seq_length,
+                                          pair=False)
+        dataset = BertEmbeddingDataset(sentences, transform)
+        return DataLoader(dataset=dataset, batch_size=self.batch_size, shuffle=shuffle)

@@ -29,6 +29,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import torch
+import os
 
 import logging
 from ..text import torchtext
@@ -65,6 +66,38 @@ class AlmondEmbeddings(torchtext.vocab.Vectors):
         self.vectors = torch.stack(vectors, dim=0).view(-1, dim)
         self.dim = dim
 
+class load_bert_embeddings(torchtext.vocab.Vectors):
+
+    def __init__(self, checkpoint, name=None, cache=None, **kw):
+        self.cache(checkpoint, name, cache, url=None)
+        super().__init__(name, cache, **kw)
+
+    def cache(self, checkpoint, name, cache, url=None):
+        del name
+        del cache
+        del url
+
+        itos = []
+        with open(os.path.join(checkpoint, 'vocab.txt')) as vocab:
+            for word in vocab:
+                itos.append(word)
+        # with open(os.path.join(checkpoint, 'bert_model.ckpt.data-00000-of-00001')) as f:
+        ######
+        from functools import partial
+        import pickle
+        pickle.load = partial(pickle.load, encoding="latin1")
+        pickle.Unpickler = partial(pickle.Unpickler, encoding="latin1")
+        model_file = os.path.join(checkpoint, 'bert_model.ckpt.data-00000-of-00001')
+        # with open(model_file, 'r') as f:
+        #     res = pickle.load(f, encoding="latin1")
+        model_dict = torch.load(model_file, map_location=lambda storage, loc: storage, pickle_module=pickle)
+        #####
+
+        # model_dict = torch.load(os.path.join(checkpoint, 'bert_model.ckpt.data-00000-of-00001'))
+        embedding_matrix = model_dict['bert']['embeddings']['word_embeddings']
+
+        dim = embedding_matrix.size(1)
+
 
 def load_embeddings(args, logger=_logger):
     logger.info(f'Getting pretrained word vectors')
@@ -76,4 +109,6 @@ def load_embeddings(args, logger=_logger):
     vectors = [char_vectors, glove_vectors]
     if args.almond_type_embeddings:
         vectors.append(AlmondEmbeddings())
+    # if args.bert_checkpoint is not None:
+    #     vectors.append(load_bert_embeddings(args.bert_checkpoint))
     return vectors

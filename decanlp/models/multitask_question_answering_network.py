@@ -97,28 +97,28 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if args.glove_and_char:
                 self.bert_embedding_projection = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
 
-        self.decoder_embeddings = Embedding(field, args.dimension, 
+        self.decoder_embeddings = Embedding(field, args.dimension,
             dropout=args.dropout_ratio, project=True)
-    
+
         self.bilstm_before_coattention = PackedLSTM(args.dimension,  args.dimension,
             batch_first=True, bidirectional=True, num_layers=1, dropout=0)
         self.coattention = CoattentiveLayer(args.dimension, dropout=0.3)
         dim = 2*args.dimension + args.dimension + args.dimension
 
         self.context_bilstm_after_coattention = PackedLSTM(dim, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
         self.self_attentive_encoder_context = TransformerEncoder(args.dimension, args.transformer_heads, args.transformer_hidden, args.transformer_layers, args.dropout_ratio)
         self.bilstm_context = PackedLSTM(args.dimension, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
 
         self.question_bilstm_after_coattention = PackedLSTM(dim, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
         self.self_attentive_encoder_question = TransformerEncoder(args.dimension, args.transformer_heads, args.transformer_hidden, args.transformer_layers, args.dropout_ratio)
         self.bilstm_question = PackedLSTM(args.dimension, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
 
         self.self_attentive_decoder = TransformerDecoder(args.dimension, args.transformer_heads, args.transformer_hidden, args.transformer_layers, args.dropout_ratio)
@@ -152,8 +152,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             question_elmo = self.project_elmo(elmo(question_tokens, self.args.elmo, question.device).detach())
 
         if self.args.bert_embeddings:
-            context_bert_embedded = torch.tensor(list(map(lambda x: x[1], self.bert(list(map(lambda x: ' '.join(x), context_tokens))))))
-            question_bert_embedded = torch.tensor(list(map(lambda x: x[1], self.bert(list(map(lambda x: ' '.join(x), question_tokens))))))
+            context_bert_embedded = torch.tensor(list(map(lambda x: x[1], self.bert(list(map(lambda x: ' '.join(x), context_tokens)))))).to(context.device)
+            question_bert_embedded = torch.tensor(list(map(lambda x: x[1], self.bert(list(map(lambda x: ' '.join(x), question_tokens)))))).to(question.device)
             context_bert = self.bert_projection(context_bert_embedded)
             question_bert = self.bert_projection(question_bert_embedded)
 

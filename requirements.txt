@@ -24,3 +24,6 @@ tabulate
 
 -e git+git://github.com/salesforce/cove.git#egg=cove
 allennlp
+
+bert_embedding
+mxnet-cu92

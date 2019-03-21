@@ -87,7 +87,11 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
 
         if args.bert_embeddings:
-            self.bert = BertEmbedding_with_space_tokenizer(model=args.bert_model, dataset_name=args.bert_dataset_name, max_seq_length=args.max_train_context_length)
+            if self.device != 'cpu':
+                context = mx.gpu(0)
+            else:
+                context = mx.cpu()
+            self.bert = BertEmbedding_with_space_tokenizer(ctx=context, model=args.bert_model, dataset_name=args.bert_dataset_name, max_seq_length=args.max_train_context_length)
             bert_dim = 768
             self.bert_projection = Feedforward(bert_dim, args.dimension)
             if args.glove_and_char:

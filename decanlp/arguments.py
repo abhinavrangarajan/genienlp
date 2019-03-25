@@ -105,6 +105,9 @@ def parse(argv):
     parser.add_argument('--no_glove_and_char', action='store_false', dest='glove_and_char', help='turn off GloVe and CharNGram embeddings')
     parser.add_argument('--trainable_decoder_embedding', default=0, type=int, help='size of trainable portion of decoder embedding (0 or omit to disable)')
     parser.add_argument('--no_glove_decoder', action='store_false', dest='glove_decoder', help='turn off GloVe embeddings from decoder')
+    parser.add_argument('--bert_embedding', action='store_true', help='whether to use bert embeddings')
+    parser.add_argument('--bert_layer', type=int, default=-1, help='which layer of bert to use (if provided layer_pooling is ignored)')
+    parser.add_argument('--bert_layer_pooling', default='mean', choices=['mean', 'sum'], help='type of pooling used to obtain final embeddings from all layers')
 
     parser.add_argument('--warmup', default=800, type=int, help='warmup for learning rate')
     parser.add_argument('--grad_clip', default=1.0, type=float, help='gradient clipping')

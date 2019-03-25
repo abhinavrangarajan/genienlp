@@ -37,6 +37,9 @@ import ujson as json
 import os
 import logging
 
+import dill
+import pickle
+
 logger = logging.getLogger(__name__)
 
 class Saver(object):
@@ -91,7 +94,8 @@ class Saver(object):
                 logging.warning('Failed to delete old checkpoint: %s', e)
         if self.world_size > 1:
             torch.distributed.barrier()
-        torch.save(save_model_state_dict, os.path.join(self._savedir, model_name))
+
+        torch.save(save_model_state_dict, os.path.join(self._savedir, model_name), pickle_module=dill)
         if self.world_size > 1:
             torch.distributed.barrier()
         torch.save(save_opt_state_dict, os.path.join(self._savedir, opt_name))

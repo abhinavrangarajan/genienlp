@@ -240,8 +240,7 @@ class Iterator(object):
                         minibatch.reverse()
                     else:
                         minibatch.sort(key=self.sort_key, reverse=self.reverse)
-                b =  Batch(minibatch, self.dataset, self.device,
-                            self.train)
+                b = Batch(minibatch, self.dataset, self.device, self.train)
                 yield b
             if not self.repeat:
                 return

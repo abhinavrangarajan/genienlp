@@ -451,3 +451,108 @@ class SubwordField(ReversibleField):
         for data in sources:
             for x in tqdm(data, 'segmenting'):
                 x[:] = self.vocab.segment(x)
+
+class BertField(Field):
+
+    def __init__(
+            self, sequential=True, use_vocab=True, init_token=None,
+            eos_token=None, fix_length=None, tensor_type=torch.LongTensor,
+            preprocessing=None, postprocessing=None, lower=False,
+            tokenize=(lambda s: s.split()), include_lengths=False,
+            batch_first=False, pad_token="<pad>", unk_token="<unk>",
+            pad_first=False, decap=False, numerical=False, **kwargs):
+
+        if kwargs.get('tokenize') is list:
+            self.use_revtok = False
+        else:
+            self.use_revtok = True
+        if kwargs.get('tokenize') is None:
+            kwargs['tokenize'] = 'revtok'
+        if self.use_revtok:
+            try:
+                import revtok
+            except ImportError:
+                print("Please install revtok.")
+                raise
+            self.detokenize = revtok.detokenize
+        else:
+            self.detokenize = None
+
+        from ....utils.tokenization import BertTokenizer
+        self.tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
+
+        self.sequential = sequential
+        self.numerical = numerical
+        self.use_vocab = use_vocab
+        self.init_token = init_token
+        self.eos_token = eos_token
+        self.unk_token = unk_token
+        self.fix_length = fix_length
+        self.tensor_type = tensor_type
+        self.preprocessing = preprocessing
+        self.postprocessing = postprocessing
+        self.lower = lower
+        self.tokenize = get_tokenizer(tokenize)
+        self.include_lengths = include_lengths
+        self.batch_first = batch_first
+        self.pad_token = pad_token if self.sequential else None
+        self.pad_first = pad_first
+
+    def preprocess(self, x, tokenize=None, field_name=None):
+        """Load a single example using this field, tokenizing if necessary.
+
+        If the input is a Python 2 `str`, it will be converted to Unicode
+        first. If `sequential=True`, it will be tokenized. Then the input
+        will be optionally lowercased and passed to the user-provided
+        `preprocessing` Pipeline."""
+        if (six.PY2 and isinstance(x, six.string_types) and not
+                isinstance(x, six.text_type)):
+            x = Pipeline(lambda s: six.text_type(s, encoding='utf-8'))(x)
+        if self.sequential and isinstance(x, six.text_type):
+            program = False
+            if field_name == 'answer':
+                program = True
+            x = self.tokenizer.tokenize(x.rstrip('\n'), basic_tokenizer=False, program=program)
+
+        if self.lower:
+            x = Pipeline(six.text_type.lower)(x)
+        if self.preprocessing is not None:
+            return self.preprocessing(x)
+        else:
+            return x
+
+
+    def reverse(self, batch, detokenize=None, field_name=None, limited=False):
+
+        if not self.batch_first:
+            batch = batch.t()
+        with torch.cuda.device_of(batch):
+            batch = batch.tolist()
+        batch = [[self.vocab.itos[ind] for ind in ex] for ex in batch]  # denumericalize
+
+        def trim(s, t):
+            sentence = []
+            for w in s:
+                if w == t:
+                    break
+                sentence.append(w)
+            return sentence
+
+        batch = [trim(ex, self.eos_token) for ex in batch]  # trim past frst eos
+
+        def filter_special(tok):
+            return tok not in (self.init_token, self.pad_token)
+
+        batch = [filter(filter_special, ex) for ex in batch]
+        if detokenize is not None:
+            return [detokenize(ex, field_name=field_name) for ex in batch]
+        elif self.detokenize is not None:
+            return [self.detokenize(ex) for ex in batch]
+        else:
+            return [''.join(ex) for ex in batch]
+
+
+
+
+
+

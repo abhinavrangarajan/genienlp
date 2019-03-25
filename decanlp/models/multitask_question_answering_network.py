@@ -37,6 +37,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from pytorch_pretrained_bert import BertModel
+
 from ..util import get_trainable_params, set_seed
 from ..modules import expectedBLEU, expectedMultiBleu, matrixBLEU
 
@@ -83,11 +85,20 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             self.project_elmo = Feedforward(elmo_dim, args.dimension)
             if self.args.glove_and_char:
                 self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
+
+        if args.bert_embedding:
+            # self.bert_projection = Feedforward(768, args.dimension, dropout=0.0)
+            self.bert_projection = Feedforward(1024, args.dimension, dropout=0.0)
+            bert_model = BertModel.from_pretrained('bert-large-cased')
+            bert_model.eval()
+            bert_model.to(self.device)
+            self.bert_model = bert_model
         
         self.decoder_embeddings = Embedding(field, args.dimension,
                                             include_pretrained=args.glove_decoder,
                                             trained_dimension=args.trainable_decoder_embedding,
                                             dropout=args.dropout_ratio, project=True)
+
     
         self.bilstm_before_coattention = PackedLSTM(args.dimension,  args.dimension,
             batch_first=True, bidirectional=True, num_layers=1, dropout=0)
@@ -126,31 +137,61 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
     def forward(self, batch, iteration):
         context, context_lengths, context_limited, context_elmo    = batch.context,  batch.context_lengths,  batch.context_limited, batch.context_elmo
         question, question_lengths, question_limited, question_elmo = batch.question, batch.question_lengths, batch.question_limited, batch.question_elmo
-        answer, answer_lengths, answer_limited       = batch.answer,   batch.answer_lengths,   batch.answer_limited
+        answer, answer_lengths, answer_limited, answer_elmo       = batch.answer, batch.answer_lengths, batch.answer_limited, batch.answer_elmo
         oov_to_limited_idx, limited_idx_to_full_idx  = batch.oov_to_limited_idx, batch.limited_idx_to_full_idx
 
         def map_to_full(x):
             return limited_idx_to_full_idx[x]
         self.map_to_full = map_to_full
 
-        if -1 not in self.args.elmo:
-            def elmo(z, layers, device):
-                e = self.elmo(batch_to_ids(z).to(device))['elmo_representations']
-                return torch.cat([e[x] for x in layers], -1)
-            context_elmo =  self.project_elmo(elmo(context_elmo, self.args.elmo, context.device).detach())
-            question_elmo = self.project_elmo(elmo(question_elmo, self.args.elmo, question.device).detach())
+        if self.args.bert_embedding:
 
-        if self.args.glove_and_char:
-            context_embedded = self.encoder_embeddings(context)
-            question_embedded = self.encoder_embeddings(question)
-            if self.args.cove:
-                context_embedded = self.project_cove(torch.cat([self.cove(context_embedded[:, :, -300:], context_lengths), context_embedded], -1).detach())
-                question_embedded = self.project_cove(torch.cat([self.cove(question_embedded[:, :, -300:], question_lengths), question_embedded], -1).detach())
-            if -1 not in self.args.elmo:
-                context_embedded = self.project_embeddings(torch.cat([context_embedded, context_elmo], -1))
-                question_embedded = self.project_embeddings(torch.cat([question_embedded, question_elmo], -1))
+            context_tensor = context.to(self.device)
+            question_tensor = question.to(self.device)
+
+            segments_context_ids = torch.zeros_like(context_tensor)
+            segment_question_ids = torch.zeros_like(question_tensor)
+
+
+            with torch.no_grad():
+                encoded_layers_context, _ = self.bert_model(context_tensor, segments_context_ids)
+                encoded_layers_question, _ = self.bert_model(question_tensor, segment_question_ids)
+
+            if self.args.bert_layer != -1:
+                encoded_layer_context = encoded_layers_context[self.args.bert_layer]
+                encoded_layer_question = encoded_layers_question[self.args.bert_layer]
+
+            else:
+                if self.args.bert_layer_pooling == 'mean':
+                    encoded_layer_context = torch.mean(torch.stack(encoded_layers_context, dim=0), dim=0)
+                    encoded_layer_question = torch.mean(torch.stack(encoded_layers_question, dim=0), dim=0)
+                elif self.args.bert_layer_pooling == 'sum':
+                    encoded_layer_context = torch.sum(torch.stack(encoded_layers_context, dim=0), dim=0)
+                    encoded_layer_question = torch.mean(torch.stack(encoded_layers_question, dim=0), dim=0)
+
+            context_embedded = self.bert_projection(encoded_layer_context)
+            question_embedded = self.bert_projection(encoded_layer_question)
+
         else:
-            context_embedded, question_embedded = context_elmo, question_elmo 
+
+            if -1 not in self.args.elmo:
+                def elmo(z, layers, device):
+                    e = self.elmo(batch_to_ids(z).to(device))['elmo_representations']
+                    return torch.cat([e[x] for x in layers], -1)
+                context_elmo =  self.project_elmo(elmo(context_elmo, self.args.elmo, context.device).detach())
+                question_elmo = self.project_elmo(elmo(question_elmo, self.args.elmo, question.device).detach())
+
+            if self.args.glove_and_char:
+                context_embedded = self.encoder_embeddings(context)
+                question_embedded = self.encoder_embeddings(question)
+                if self.args.cove:
+                    context_embedded = self.project_cove(torch.cat([self.cove(context_embedded[:, :, -300:], context_lengths), context_embedded], -1).detach())
+                    question_embedded = self.project_cove(torch.cat([self.cove(question_embedded[:, :, -300:], question_lengths), question_embedded], -1).detach())
+                if -1 not in self.args.elmo:
+                    context_embedded = self.project_embeddings(torch.cat([context_embedded, context_elmo], -1))
+                    question_embedded = self.project_embeddings(torch.cat([question_embedded, question_elmo], -1))
+            else:
+                context_embedded, question_embedded = context_elmo, question_elmo
 
         context_encoded = self.bilstm_before_coattention(context_embedded, context_lengths)[0]
         question_encoded = self.bilstm_before_coattention(question_embedded, question_lengths)[0]
@@ -258,7 +299,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
     def greedy(self, self_attended_context, context, question, context_indices, question_indices, oov_to_limited_idx, rnn_state=None):
         B, TC, C = context.size()
         T = self.args.max_output_length
-        outs = context.new_full((B, T), self.field.decoder_stoi['<pad>'], dtype=torch.long)
+        outs = context.new_full((B, T), self.field.decoder_stoi[self.field.pad_token], dtype=torch.long)
         hiddens = [self_attended_context[0].new_zeros((B, T, C))
                    for l in range(len(self.self_attentive_decoder.layers) + 1)]
         hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])
@@ -268,7 +309,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
         for t in range(T):
             if t == 0:
                 embedding = self.decoder_embeddings(
-                    self_attended_context[-1].new_full((B, 1), self.field.vocab.stoi['<init>'], dtype=torch.long), [1]*B)
+                    self_attended_context[-1].new_full((B, 1), self.field.vocab.stoi[self.field.init_token], dtype=torch.long), [1]*B)
             else:
                 embedding = self.decoder_embeddings(outs[:, t - 1].unsqueeze(1), [1]*B)
             hiddens[0][:, t] = hiddens[0][:, t] + (math.sqrt(self.self_attentive_decoder.d_model) * embedding).squeeze(1)
@@ -288,7 +329,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 oov_to_limited_idx)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)
-            eos_yet = eos_yet | (preds == self.field.decoder_stoi['<eos>'])
+            eos_yet = eos_yet | (preds == self.field.decoder_stoi[self.field.eos_token])
             outs[:, t] = preds.cpu().apply_(self.map_to_full)
             if eos_yet.all():
                 break

@@ -41,6 +41,7 @@ from logging import handlers
 from collections import defaultdict
 import numpy as np
 import itertools
+import dill
 
 import torch
 
@@ -83,7 +84,11 @@ def prepare_data(args, field, logger):
 
     if field is None:
         logger.info(f'Constructing field')
-        FIELD = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+        if args.bert_embedding:
+            FIELD = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True)
+        else:
+            FIELD = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+
     else:
         FIELD = field
 
@@ -325,7 +330,7 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                             saver.save(save_model_state_dict, save_opt_state_dict, global_step=iteration)
                             if should_save_best:
                                 logger.info(f'{args.timestamp}:{elapsed_time(logger)}:iteration_{iteration}:{round_progress}train_{task.name}:{task_progress}found new best model')
-                                torch.save(save_model_state_dict, os.path.join(args.log_dir, 'best.pth'))
+                                torch.save(save_model_state_dict, os.path.join(args.log_dir, 'best.pth'), pickle_module=dill)
                                 if world_size > 1:
                                     torch.distributed.barrier()
                                 torch.save(save_opt_state_dict, os.path.join(args.log_dir, 'best_optim.pth'))

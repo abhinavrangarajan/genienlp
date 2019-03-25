@@ -51,8 +51,7 @@ class AlmondDataset(generic_dataset.CQA):
     def __init__(self, path, field, tokenize, reverse_task=False, subsample=None, **kwargs):
         fields = [(x, field) for x in self.fields]
         cached_path = kwargs.pop('cached_path')
-        cache_name = os.path.join(cached_path, os.path.dirname(path).strip("/"), '.cache', os.path.basename(path),
-                                  str(subsample))
+        cache_name = os.path.join(cached_path, os.path.dirname(path).strip("/"), '.cache', os.path.basename(path), str(subsample))
 
         # the question is irrelevant, so the question says English and ThingTalk even if we're doing
         # a different language (like Chinese)

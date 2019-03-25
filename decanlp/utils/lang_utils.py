@@ -82,3 +82,14 @@ def extract_words(thingpedia):
                             words_list.add('param:' + arg + ':' + type)
 
     return words_list
+
+def entity_tokens():
+    ENTITIES = ['DATE', 'DURATION', 'EMAIL_ADDRESS', 'HASHTAG',
+                'LOCATION', 'NUMBER', 'PHONE_NUMBER', 'QUOTED_STRING',
+                'TIME', 'URL', 'USERNAME', 'PATH_NAME', 'CURRENCY']
+    expanded_entities = []
+    for token in ENTITIES:
+        expanded_entities.extend([f'{token}_{i}' for i in range(5)])
+    additional_tokens = ['ThingTalk']
+    expanded_entities.extend(additional_tokens)
+    return expanded_entities

@@ -462,39 +462,13 @@ class BertField(Field):
             batch_first=False, pad_token="<pad>", unk_token="<unk>",
             pad_first=False, decap=False, numerical=False, **kwargs):
 
-        if kwargs.get('tokenize') is list:
-            self.use_revtok = False
-        else:
-            self.use_revtok = True
-        if kwargs.get('tokenize') is None:
-            kwargs['tokenize'] = 'revtok'
-        if self.use_revtok:
-            try:
-                import revtok
-            except ImportError:
-                print("Please install revtok.")
-                raise
-            self.detokenize = revtok.detokenize
-        else:
-            self.detokenize = None
+
+        self.detokenize = None
 
         from ....utils.tokenization import BertTokenizer
         bert_tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
         setattr(bert_tokenizer.basic_tokenizer, 'do_lower_case', lower)
-        ### will clean up this part later (should be moved to almond task)
-        ENTITIES = ['DATE', 'DURATION', 'EMAIL_ADDRESS', 'HASHTAG',
-                    'LOCATION', 'NUMBER', 'PHONE_NUMBER', 'QUOTED_STRING',
-                    'TIME', 'URL', 'USERNAME', 'PATH_NAME', 'CURRENCY']
-        expanded_ENTITIES = []
-        for token in ENTITIES:
-            expanded_ENTITIES.extend([f'{token}_{i}' for i in range(5)])
-        additional_tokens = ['ThingTalk']
-        expanded_ENTITIES.extend(additional_tokens)
-        setattr(bert_tokenizer, 'never_split', bert_tokenizer.basic_tokenizer.never_split + tuple(expanded_ENTITIES))
-        ### will clean up this part later (should be moved to almond task)
         self.tokenizer = bert_tokenizer
-
-
 
         self.sequential = sequential
         self.numerical = numerical
@@ -512,6 +486,11 @@ class BertField(Field):
         self.batch_first = batch_first
         self.pad_token = pad_token if self.sequential else None
         self.pad_first = pad_first
+
+    def set_values(self, **kwargs):
+        for k, v in kwargs.items():
+            if hasattr(self.tokenizer, k):
+                setattr(self.tokenizer, k, v)
 
     def preprocess(self, x, tokenize=None, field_name=None):
         """Load a single example using this field, tokenizing if necessary.
@@ -559,15 +538,39 @@ class BertField(Field):
             return tok not in (self.init_token, self.pad_token)
 
         batch = [filter(filter_special, ex) for ex in batch]
+
+        def post_process(text):
+            result = []
+            i = j = 0
+
+            while i < len(text):
+                if text[i] == '"':
+                    result.append('"')
+                    j = i+1
+                    split_tokens = []
+                    while text[j] != '"':
+                        unified_token = text[j]
+                        while text[j+1].startswith('##'):
+                            unified_token += text[j+1][len('##'):]
+                            j += 1
+                        split_tokens.append(unified_token)
+                        j += 1
+                    result.extend(split_tokens)
+                    i = j+1
+                    result.append('"')
+
+                else:
+                    result.append(text[i])
+                    i += 1
+            return result
+
+        processed_batch = []
+        for ex in batch:
+            processed_batch.append(post_process(list(ex)))
+
         if detokenize is not None:
-            return [detokenize(ex, field_name=field_name) for ex in batch]
+            return [detokenize(ex, field_name=field_name) for ex in processed_batch]
         elif self.detokenize is not None:
-            return [self.detokenize(ex) for ex in batch]
+            return [self.detokenize(ex) for ex in processed_batch]
         else:
-            return [''.join(ex) for ex in batch]
-
-
-
-
-
-
+            return [''.join(ex) for ex in processed_batch]

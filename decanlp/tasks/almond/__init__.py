@@ -37,7 +37,8 @@ from ..base import BaseTask
 from ..registry import register_task
 from .. import generic_dataset
 from ...text.torchtext import data
-from ...utils.lang_utils import *
+from ...utils.lang_utils import extract_words, entity_tokens
+from ...text.torchtext.data import BertField
 
 
 from .grammar import thingtalk, plainthingtalk, posthingtalk
@@ -178,6 +179,10 @@ class Almond(BaseTask):
         return ['em', 'nem', 'nf1', 'fm', 'dm', 'bleu']
 
     def get_splits(self, field, root, **kwargs):
+        if isinstance(field, BertField):
+            bert_kwargs= {}
+            bert_kwargs['never_split'] = tuple(set(entity_tokens() + list(field.tokenizer.never_split)))
+            field.set_values(**bert_kwargs)
         return AlmondDataset.splits(fields=field, root=root, tokenize=self.tokenize, reverse_task=False, **kwargs)
 
     def tokenize(self, sentence, field_name=None):

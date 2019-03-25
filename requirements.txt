@@ -1,5 +1,5 @@
 numpy
-torch==0.4.1
+torch>=0.4.1,<2.0.0
 
 # Revtok
 -e git+https://github.com/jekbradbury/revtok.git#egg=revtok
@@ -16,6 +16,7 @@ python-dateutil
 ujson
 -e git+git://github.com/andersjo/pyrouge.git#egg=pyrouge
 sacrebleu
+orderedset
 
 # WikISQL evaluation
 records

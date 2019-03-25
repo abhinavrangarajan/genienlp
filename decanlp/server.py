@@ -29,7 +29,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-import os
 from argparse import ArgumentParser
 import ujson as json
 import torch
@@ -41,22 +40,17 @@ import sys
 from copy import deepcopy
 from pprint import pformat
 
-from .util import set_seed
+from .util import set_seed, load_config_json
 from . import models
-
-from .text import torchtext
 from .text.torchtext.data import Example
-from .utils.generic_dataset import CONTEXT_SPECIAL, QUESTION_SPECIAL, get_context_question, CQA
+from .utils.embeddings import load_embeddings
+from .tasks.registry import get_tasks
+from .tasks.generic_dataset import CONTEXT_SPECIAL, QUESTION_SPECIAL, get_context_question, CQA
 
 logger = logging.getLogger(__name__)
 
 class ProcessedExample():
     pass
-
-
-def split_tokenize(x):
-    return x.split()
-
 
 class Server():
     def __init__(self, args, field, model):
@@ -66,16 +60,12 @@ class Server():
         self.model = model
 
         logger.info(f'Vocabulary has {len(self.field.vocab)} tokens from training')
-
-        char_vectors = torchtext.vocab.CharNGram(cache=self.args.embeddings)
-        if args.small_glove:
-            glove_vectors = torchtext.vocab.GloVe(cache=args.embeddings, name="6B", dim=50)
-        else:
-            glove_vectors = torchtext.vocab.GloVe(cache=args.embeddings)
-        self._vector_collections = [char_vectors, glove_vectors]
+        self._vector_collections = load_embeddings(args)
         
         self._limited_idx_to_full_idx = deepcopy(self.field.decoder_to_vocab) # should avoid this with a conditional in map to full
         self._oov_to_limited_idx = {}
+
+        self._cached_tasks = dict()
         
         assert self.field.include_lengths
 
@@ -124,15 +114,22 @@ class Server():
     
     def handle_request(self, line):
         request = json.loads(line)
-        task = request['task'] if 'task' in request else 'generic'
+
+        task_name = request['task'] if 'task' in request else 'generic'
+        if task_name in self._cached_tasks:
+            task = self._cached_tasks[task_name]
+        else:
+            task = get_tasks([task_name], self.args)[0]
+            self._cached_tasks[task_name] = task
         
         context = request['context']
+        if not context:
+            context = task.default_context
         question = request['question']
+        if not question:
+            question = task.default_question
         answer = ''
-        if task == 'almond':
-            tokenize = split_tokenize
-        else:
-            tokenize = None
+        tokenize = task.tokenize
     
         context_question = get_context_question(context, question)
         fields = [(x, self.field) for x in CQA.fields]
@@ -141,10 +138,7 @@ class Server():
         batch = self.numericalize_example(ex)
         _, prediction_batch = self.model(batch, iteration=0)
         
-        if task == 'almond':
-            predictions = self.field.reverse(prediction_batch, detokenize=lambda x: ' '.join(x))
-        else:
-            predictions = self.field.reverse(prediction_batch)
+        predictions = self.field.reverse(prediction_batch, detokenize=task.detokenize, field_name='answer')
         
         response = json.dumps(dict(id=request['id'], answer=predictions[0]))
         return response + '\n'
@@ -200,6 +194,7 @@ class Server():
         self.model.to(self.device)
     
         self.model.eval()
+        setattr(self.model, 'prediction', True)
         with torch.no_grad():
             if self.args.stdin:
                 self._run_stdin()
@@ -213,48 +208,13 @@ def get_args(argv):
     parser.add_argument('--devices', default=[0], nargs='+', type=int, help='a list of devices that can be used (multi-gpu currently WIP)')
     parser.add_argument('--seed', default=123, type=int, help='Random seed.')
     parser.add_argument('--embeddings', default='./decaNLP/.embeddings', type=str, help='where to save embeddings.')
+    parser.add_argument('--thingpedia', type=str, help='where to load thingpedia.json from (for almond task only)')
     parser.add_argument('--checkpoint_name', default='best.pth', help='Checkpoint file to use (relative to --path, defaults to best.pth)')
     parser.add_argument('--port', default=8401, type=int, help='TCP port to listen on')
     parser.add_argument('--stdin', action='store_true', help='Interact on stdin/stdout instead of TCP')
 
     args = parser.parse_args(argv[1:])
-
-    with open(os.path.join(args.path, 'config.json')) as config_file:
-        config = json.load(config_file)
-        retrieve = ['model',
-                    'transformer_layers', 'rnn_layers', 'transformer_hidden', 
-                    'dimension', 'load', 'max_val_context_length', 'val_batch_size', 
-                    'transformer_heads', 'max_output_length', 'max_generative_vocab', 
-                    'lower', 'cove', 'intermediate_cove', 'elmo', 'glove_and_char',
-                    'use_maxmargin_loss', 'reverse_task_bool', 'small_glove']
-        for r in retrieve:
-            if r in config:
-                setattr(args, r,  config[r])
-            elif 'cove' in r:
-                setattr(args, r, False)
-            elif 'elmo' in r:
-                setattr(args, r, [-1])
-            elif 'glove_and_char' in r:
-                setattr(args, r, True)
-            else:
-                setattr(args, r, None)
-        args.dropout_ratio = 0.0
-
-    args.task_to_metric = {
-        'cnn_dailymail': 'avg_rouge',
-        'iwslt.en.de': 'bleu',
-        'multinli.in.out': 'em',
-        'squad': 'nf1',
-        'srl': 'nf1',
-        'almond': 'bleu' if args.reverse_task_bool else 'em',
-        'sst': 'em',
-        'wikisql': 'lfem',
-        'woz.en': 'joint_goal_em',
-        'zre': 'corpus_f1',
-        'schema': 'em'
-    }
-
-    args.best_checkpoint = os.path.join(args.path, args.checkpoint_name)
+    load_config_json(args)
     return args
 
 

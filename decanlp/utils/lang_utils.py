@@ -35,32 +35,3 @@ def get_functions(program):
 
 def get_devices(program):
     return [x.rsplit('.', 1)[0] for x in program.split(' ') if x.startswith('@')]
-
-def program_tokenizer(text):
-
-    result = []
-    i = j = 0
-    text = text.split(" ")
-
-    while i < len(text):
-        if text[i] == '"':
-            result.append('"')
-            j = i+1
-            while text[j] != '"':
-                if self.do_basic_tokenize:
-                  split_tokens = []
-                  for token in self.basic_tokenizer.tokenize(text[j]):
-                      for sub_token in self.wordpiece_tokenizer.tokenize(token):
-                          split_tokens.append(sub_token)
-                else:
-                    split_tokens = self.wordpiece_tokenizer.tokenize(text[j])
-
-                result.extend(split_tokens)
-            i = j+1
-            result.append('"')
-
-        else:
-            result.append(text[i])
-            i += 1
-
-    return result

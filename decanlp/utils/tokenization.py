@@ -87,25 +87,34 @@ class BertTokenizer(object):
                                               never_split=never_split)
         self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
         self.max_len = max_len if max_len is not None else int(1e12)
+        self.never_split = never_split
 
     def tokenize(self, text, basic_tokenizer=True, program=False):
         split_tokens = []
         if program:
             split_tokens = self.program_tokenizer(text)
+            return split_tokens
         if basic_tokenizer:
             tokenizer = self.basic_tokenizer
             for token in tokenizer.tokenize(text):
-                for sub_token in self.wordpiece_tokenizer.tokenize(token):
-                    split_tokens.append(sub_token)
+                if token not in self.never_split:
+                    for sub_token in self.wordpiece_tokenizer.tokenize(token):
+                        split_tokens.append(sub_token)
+                else:
+                    split_tokens.append(token)
         else:
             for token in text.split():
-                for sub_token in self.wordpiece_tokenizer.tokenize(token):
-                    split_tokens.append(sub_token)
+                if token not in self.never_split:
+                    for sub_token in self.wordpiece_tokenizer.tokenize(token):
+                        split_tokens.append(sub_token)
+                else:
+                    split_tokens.append(token)
 
         return split_tokens
 
     def program_tokenizer(self, text):
-
+        """Specific tokenization for thingtalk programs
+        use wordpiece tokenization only for words in quoted strings"""
         result = []
         i = j = 0
         text = text.split(" ")
@@ -114,6 +123,7 @@ class BertTokenizer(object):
             if text[i] == '"':
                 result.append('"')
                 j = i+1
+
                 split_tokens = []
                 while text[j] != '"':
                     split_tokens.extend(self.wordpiece_tokenizer.tokenize(text[j]))

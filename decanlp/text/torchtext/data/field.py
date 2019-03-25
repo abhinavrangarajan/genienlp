@@ -479,7 +479,22 @@ class BertField(Field):
             self.detokenize = None
 
         from ....utils.tokenization import BertTokenizer
-        self.tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
+        bert_tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
+        setattr(bert_tokenizer.basic_tokenizer, 'do_lower_case', lower)
+        ### will clean up this part later (should be moved to almond task)
+        ENTITIES = ['DATE', 'DURATION', 'EMAIL_ADDRESS', 'HASHTAG',
+                    'LOCATION', 'NUMBER', 'PHONE_NUMBER', 'QUOTED_STRING',
+                    'TIME', 'URL', 'USERNAME', 'PATH_NAME', 'CURRENCY']
+        expanded_ENTITIES = []
+        for token in ENTITIES:
+            expanded_ENTITIES.extend([f'{token}_{i}' for i in range(5)])
+        additional_tokens = ['ThingTalk']
+        expanded_ENTITIES.extend(additional_tokens)
+        setattr(bert_tokenizer, 'never_split', bert_tokenizer.basic_tokenizer.never_split + tuple(expanded_ENTITIES))
+        ### will clean up this part later (should be moved to almond task)
+        self.tokenizer = bert_tokenizer
+
+
 
         self.sequential = sequential
         self.numerical = numerical

@@ -68,7 +68,10 @@ def get_all_splits(args, new_vocab):
 
 
 def prepare_data(args, FIELD):
-    new_vocab = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
+    if args.bert_embedding:
+        new_vocab = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True)
+    else:
+        new_vocab = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
     splits = get_all_splits(args, new_vocab)
     new_vocab.build_vocab(*splits)
     logger.info(f'Vocabulary has {len(FIELD.vocab)} tokens from training')
@@ -130,17 +133,17 @@ def run(args, field, val_sets, model):
             if 'sql' in task.name or 'squad' in task.name:
                 ids_file_name = answer_file_name.replace('gold', 'ids')
             if os.path.exists(prediction_file_name):
-                logger.warning('** ', prediction_file_name, ' already exists -- this is where predictions are stored **')
+                logger.warning(f'** {prediction_file_name} already exists -- this is where predictions are stored **')
                 if args.overwrite:
-                    logger.warning('**** overwriting ', prediction_file_name, ' ****')
+                    logger.warning(f'**** overwriting {prediction_file_name} ****')
             if os.path.exists(answer_file_name):
-                logger.warning('** ', answer_file_name, ' already exists -- this is where ground truth answers are stored **')
+                logger.warning(f'** {answer_file_name} already exists -- this is where ground truth answers are stored **')
                 if args.overwrite:
-                    logger.warning('**** overwriting ', answer_file_name, ' ****')
+                    logger.warning(f'**** overwriting {answer_file_name} ****')
             if os.path.exists(results_file_name):
-                logger.warning('** ', results_file_name, ' already exists -- this is where metrics are stored **')
+                logger.warning(f'** {results_file_name} already exists -- this is where metrics are stored **')
                 if args.overwrite:
-                    logger.warning('**** overwriting ', results_file_name, ' ****')
+                    logger.warning(f'**** overwriting {results_file_name} ****')
                 else:
                     with open(results_file_name) as results_file:
                         if not args.silent:
@@ -285,7 +288,8 @@ def main(argv=sys.argv):
     model_dict = backwards_compatible_cove_dict
     model.load_state_dict(model_dict)
     field, splits = prepare_data(args, field)
-    model.set_embeddings(field.vocab.vectors)
+    if not args.bert_embedding:
+        model.set_embeddings(field.vocab.vectors)
 
     run(args, field, splits, model)
 

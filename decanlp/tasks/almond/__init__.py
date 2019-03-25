@@ -162,8 +162,7 @@ class Almond(BaseTask):
         return ['em', 'nem', 'nf1', 'fm', 'dm', 'bleu']
 
     def get_splits(self, field, root, **kwargs):
-        return AlmondDataset.splits(
-            fields=field, root=root, tokenize=self.tokenize, reverse_task=False, **kwargs)
+        return AlmondDataset.splits(fields=field, root=root, tokenize=self.tokenize, reverse_task=False, **kwargs)
 
     def tokenize(self, sentence, field_name=None):
         tokenized = sentence.split(' ')

@@ -71,7 +71,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 cove_params = get_trainable_params(self.cove) 
                 for p in cove_params:
                     p.requires_grad = False
-                cove_dim = int(args.intermediate_cove) * 600 + int(args.cove) * 600 + 400 # the last 400 is for GloVe and char n-gram embeddings
+                cove_dim = int(args.intermediate_cove) * 600 + int(args.cove) * 600 + 400 + int(args.almond_type_embeddings) * 18 # the last 400 is for GloVe and char n-gram embeddings
                 self.project_cove = Feedforward(cove_dim, args.dimension)
 
         if -1 not in self.args.elmo:

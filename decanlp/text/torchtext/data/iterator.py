@@ -126,7 +126,7 @@ class Iterator(object):
     def __init__(self, dataset, batch_size, sort_key=None, device=None,
                  batch_size_fn=None, train=True,
                  repeat=None, shuffle=None, sort=None, reverse=False,
-                 sort_within_batch=None, distributed=False, num_replicas=None, rank=None):
+                 sort_within_batch=None, distributed=False, num_replicas=None, rank=None, args=None):
         self.batch_size, self.train, self.dataset = batch_size, train, dataset
         self.batch_size_fn = batch_size_fn
         self.iterations = 0
@@ -135,6 +135,7 @@ class Iterator(object):
         self.repeat = train if repeat is None else repeat
         self.shuffle = train if shuffle is None else shuffle
         self.sort = not train if sort is None else sort
+        self.args = args
         if sort_within_batch is None:
             self.sort_within_batch = self.sort
         else:
@@ -240,7 +241,8 @@ class Iterator(object):
                         minibatch.reverse()
                     else:
                         minibatch.sort(key=self.sort_key, reverse=self.reverse)
-                b = Batch(minibatch, self.dataset, self.device, self.train)
+                Batcher = Batch(self.dataset, self.device, self.train, self.args)
+                b = Batcher.batch(minibatch)
                 yield b
             if not self.repeat:
                 return

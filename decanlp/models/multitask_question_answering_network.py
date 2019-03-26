@@ -144,7 +144,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return limited_idx_to_full_idx[x]
         self.map_to_full = map_to_full
 
-        if self.args.bert_embedding:
+        if self.args.bert_embedding and not self.args.load_embedded_data:
 
             context_tensor = context.to(self.device)
             question_tensor = question.to(self.device)
@@ -169,6 +169,12 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                     encoded_layer_context = torch.sum(torch.stack(encoded_layers_context, dim=0), dim=0)
                     encoded_layer_question = torch.mean(torch.stack(encoded_layers_question, dim=0), dim=0)
 
+            context_embedded = self.bert_projection(encoded_layer_context)
+            question_embedded = self.bert_projection(encoded_layer_question)
+
+        elif self.args.bert_embedding and self.args.load_embedded_data:
+            encoded_layer_context = batch.context_bert
+            encoded_layer_question = batch.question_bert
             context_embedded = self.bert_projection(encoded_layer_context)
             question_embedded = self.bert_projection(encoded_layer_question)
 
@@ -255,7 +261,13 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             else:
                 probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
                 loss = F.nll_loss(probs.log(), targets)
-            return loss, None
+
+            if self.args.save_embedded_data:
+                ret = {'encoded_layer_context': encoded_layer_context, 'context_lengths': context_lengths,
+                       'encoded_layer_question': encoded_layer_question, 'question_lengths': question_lengths}
+                return loss, None, ret
+            else:
+                return loss, None, {}
 
         else:
             return None, self.greedy(self_attended_context, final_context, final_question, 

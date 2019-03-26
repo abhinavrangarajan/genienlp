@@ -42,6 +42,7 @@ from collections import defaultdict
 import numpy as np
 import itertools
 import dill
+import torch.utils.data as Data
 
 import torch
 
@@ -80,12 +81,12 @@ def log(rank='main'):
     return logging.getLogger(f'process_{rank}')
 
 
-def prepare_data(args, field, logger):
+def prepare_data(args, field, logger, device):
 
     if field is None:
         logger.info(f'Constructing field')
         if args.bert_embedding:
-            FIELD = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True)
+            FIELD = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True, fix_length=args.max_output_length if args.save_embedded_data or args.load_embedded_data else None)
         else:
             FIELD = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
 
@@ -155,18 +156,97 @@ def prepare_data(args, field, logger):
     logger.info('Preprocessing validation data')
     preprocess_examples(args, args.val_tasks, val_sets, FIELD, logger, train=args.val_filter)
 
-    return FIELD, train_sets, val_sets, aux_sets
+
+    if args.load_embedded_data:
+        examples = torch.load(os.path.join(args.save, 'train_sets_saved'))
+        train_example_size = len(train_sets[0].examples)
+        train_sets[0].examples = examples['train_examples'][:train_example_size]
+
+        val_example_size = len(val_sets[0].examples)
+        val_sets[0].examples = examples['val_examples'][:val_example_size]
 
 
-def to_iter(args, world_size, val_batch_size, data, device, train=True, token_testing=False, sort=None):
-    sort = sort if not token_testing else True
-    shuffle = None if not token_testing else False
+    if args.save_embedded_data:
+        from pytorch_pretrained_bert import BertModel
+        bert_model = BertModel.from_pretrained('bert-large-cased')
+        bert_model.eval()
+        bert_model.to(device)
+        oov_to_limited_idx = {}
+        limited_idx_to_full_idx = deepcopy(FIELD.decoder_to_vocab)
+        batch_size = args.val_batch_size[0]
+        names = ['context', 'question', 'answer', 'context_special', 'question_special', 'context_question']
+        train_size = len(train_sets[0].examples)
+        for i in range(math.ceil(train_size/batch_size)):
+            example = train_sets[0].examples[i*batch_size:min((i+1)*batch_size, train_size)]
+            for name in names:
+                batch = [ex.__dict__[name] for ex in example]
+                entry, lengths, limited_entry, raw = FIELD.process(batch, device='cpu', train=True,
+                                                                   limited=FIELD.decoder_stoi, l2f=limited_idx_to_full_idx, oov2l=oov_to_limited_idx)
+
+                if args.bert_embedding and args.save_embedded_data and name != 'answer':
+
+                    entry_tensor = entry.to(device)
+                    segments_entry_ids = torch.zeros_like(entry_tensor)
+
+                    with torch.no_grad():
+                        encoded_layers_entry, _ = bert_model(entry_tensor, segments_entry_ids)
+
+                    if args.bert_layer != -1:
+                        encoded_layer_entry = encoded_layers_entry[args.bert_layer]
+                    else:
+                        if args.bert_layer_pooling == 'mean':
+                            encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                        elif args.bert_layer_pooling == 'sum':
+                            encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                for j, ex in enumerate(example):
+                    setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
+
+
+        val_size = len(val_sets[0].examples)
+        for i in range(math.ceil(val_size/batch_size)):
+            example = val_sets[0].examples[i*batch_size:min((i+1)*batch_size, val_size)]
+            for name in names:
+                batch = [ex.__dict__[name] for ex in example]
+                entry, lengths, limited_entry, raw = FIELD.process(batch, device='cpu', train=True,
+                                                                   limited=FIELD.decoder_stoi, l2f=limited_idx_to_full_idx, oov2l=oov_to_limited_idx)
+
+                if args.bert_embedding and args.save_embedded_data and name != 'answer':
+
+                    entry_tensor = entry.to(device)
+                    segments_entry_ids = torch.zeros_like(entry_tensor)
+
+                    with torch.no_grad():
+                        encoded_layers_entry, _ = bert_model(entry_tensor, segments_entry_ids)
+
+                    if args.bert_layer != -1:
+                        encoded_layer_entry = encoded_layers_entry[args.bert_layer]
+                    else:
+                        if args.bert_layer_pooling == 'mean':
+                            encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                        elif args.bert_layer_pooling == 'sum':
+                            encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                for j, ex in enumerate(example):
+                    setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
+
+
+        torch.save({'train_examples': train_sets[0].examples, 'val_examples': val_sets[0].examples} , os.path.join(args.save, 'train_sets_saved'))
+
+    return FIELD, train_sets, val_sets, aux_sets, data_dict
+
+
+def to_iter(args, world_size, val_batch_size, data, device, train=True, token_testing=False, save_embedded_data=False, sort=None):
+    if save_embedded_data:
+        sort = shuffle = repeat = train = False
+    else:
+        sort = sort if not token_testing else True
+        shuffle = None if not token_testing else False
+        repeat = train
     reverse = args.reverse
     Iterator = torchtext.data.BucketIterator if train else torchtext.data.Iterator
     it = Iterator(data, batch_size=val_batch_size,
        device=device, batch_size_fn=batch_fn if train else None, 
-       distributed=world_size>1, train=train, repeat=train, sort=sort,
-       shuffle=shuffle, reverse=reverse)
+       distributed=world_size>1, train=train, repeat=repeat, sort=sort,
+       shuffle=shuffle, reverse=reverse, args=args)
     return it
 
 
@@ -178,10 +258,10 @@ def get_learning_rate(i, args):
     return transformer_lr
 
 
-def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, writer=None, it=None):
+def step(model, batch, opt, iteration, field, task, args, lr=None, grad_clip=None):
     model.train()
     opt.zero_grad()
-    loss, predictions = model(batch, iteration)
+    loss, predictions, ret = model(batch, iteration)
     loss.backward()
     if lr is not None:
         opt.param_groups[0]['lr'] = lr
@@ -191,7 +271,7 @@ def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, wri
     opt.step()
     if torch.isnan(loss).item():
         raise ValueError('Found NaN loss')
-    return loss.item(), {}, grad_norm
+    return loss.item(), {}, grad_norm, ret
 
 
 def update_fraction(args, task_iteration):
@@ -230,16 +310,17 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
     epoch = 0
 
     logger.info(f'Preparing iterators')
-    train_iters = [(task, to_iter(args, world_size, tok, x, device, token_testing=args.token_testing))
+
+    train_iters = [(task, to_iter(args, world_size, tok, x, device, token_testing=args.token_testing, save_embedded_data=args.save_embedded_data))
                       for task, x, tok in zip(args.train_tasks, train_sets, args.train_batch_tokens)]
     train_iters = [(task, iter(train_iter)) for task, train_iter in train_iters]
 
-    val_iters = [(task, to_iter(args, world_size, tok, x, device, train=False, token_testing=args.token_testing, sort=False if 'sql' in task.name else None))
+    val_iters = [(task, to_iter(args, world_size, tok, x, device, train=False, token_testing=args.token_testing, save_embedded_data=args.save_embedded_data, sort=False if 'sql' in task.name else None))
                     for task, x, tok in zip(args.val_tasks, val_sets, args.val_batch_size)]
 
 
     if args.use_curriculum:
-        aux_iters = [(name, to_iter(args, world_size, tok, x, device, token_testing=args.token_testing))
+        aux_iters = [(name, to_iter(args, world_size, tok, x, device, token_testing=args.token_testing, save_embedded_data=args.save_embedded_data))
                           for name, x, tok in zip(args.train_tasks, aux_sets, args.train_batch_tokens)]
         aux_iters = [(task, iter(aux_iter)) for task, aux_iter in aux_iters]
 
@@ -343,7 +424,8 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                         lr = get_learning_rate(iteration, args) 
 
                     # param update
-                    loss, train_metric_dict, grad_norm = step(model, batch, opt, iteration, field, task, lr=lr, grad_clip=args.grad_clip, writer=writer, it=train_iter)
+                    loss, train_metric_dict, grad_norm, ret = step(model, batch, opt, iteration, field, task, args, lr=lr, grad_clip=args.grad_clip)
+
 
                     # update curriculum fraction
                     if args.use_curriculum:
@@ -406,7 +488,7 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
 def run(args, run_args, rank=0, world_size=1):
     device = set_seed(args, rank=rank)
     logger = initialize_logger(args, rank)
-    field, train_sets, val_sets, aux_sets, save_dict = run_args
+    field, train_sets, val_sets, aux_sets, pre_embedded_data, save_dict = run_args
 
     logger.start = time.time()
 
@@ -432,8 +514,8 @@ def run(args, run_args, rank=0, world_size=1):
             opt.load_state_dict(opt_state_dict)
 
     logger.info(f'Begin Training')
-    train(args, model, opt, train_sets, args.train_iterations, field, val_sets=val_sets, aux_sets=aux_sets,
-        rank=rank, world_size=world_size, 
+    train(args, model, opt, train_sets, args.train_iterations, field,
+        val_sets=val_sets, aux_sets=aux_sets, rank=rank, world_size=world_size,
         log_every=args.log_every, val_every=args.val_every, rounds=len(train_sets)>1,
         writer=writer if rank==0 else None, save_every=args.save_every, start_iteration=start_iteration,
         best_decascore=save_dict.get('best_decascore') if save_dict is not None else None)
@@ -469,29 +551,32 @@ def init_opt(args, model):
 
 
 def main(argv=sys.argv):
+
     args = arguments.parse(argv)
     if args is None:
         return
     set_seed(args)
     logger = initialize_logger(args)
     logger.info(f'Arguments:\n{pformat(vars(args))}')
+    device = set_seed(args, rank=0)
 
     field, save_dict = None, None
     if args.load is not None:
         logger.info(f'Loading field from {os.path.join(args.save, args.load)}')
         save_dict = torch.load(os.path.join(args.save, args.load))
         field = save_dict['field']
-    field, train_sets, val_sets, aux_sets = prepare_data(args, field, logger)
+    field, train_sets, val_sets, aux_sets, pre_embedded_data = prepare_data(args, field, logger, device)
     if (args.use_curriculum and aux_sets is None) or (not args.use_curriculum and len(aux_sets)):
         logging.error('sth unpleasant is happening with curriculum')
-    run_args = (field, train_sets, val_sets, aux_sets, save_dict)
-    if len(args.devices) > 1:
-        logger.info(f'Multiprocessing')
-        mp = Multiprocess(run, args)
-        mp.run(run_args)
-    else:
-        logger.info(f'Processing')
-        run(args, run_args, world_size=args.world_size)
+    if not args.save_embedded_data:
+        run_args = (field, train_sets, val_sets, aux_sets, pre_embedded_data, save_dict)
+        if len(args.devices) > 1:
+            logger.info(f'Multiprocessing')
+            mp = Multiprocess(run, args)
+            mp.run(run_args)
+        else:
+            logger.info(f'Processing')
+            run(args, run_args, world_size=args.world_size)
 
 
 if __name__ == '__main__':

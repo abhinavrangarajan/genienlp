@@ -98,8 +98,10 @@ class AlmondDataset(generic_dataset.CQA):
 
                 context_question = generic_dataset.get_context_question(context, question)
                 examples.append(data.Example.fromlist(
-                    [context, question, answer, generic_dataset.CONTEXT_SPECIAL, generic_dataset.QUESTION_SPECIAL, context_question], fields,
+                    [context, question, answer, generic_dataset.CONTEXT_SPECIAL, generic_dataset.QUESTION_SPECIAL, context_question],
+                    fields,
                     tokenize=tokenize))
+
                 if len(examples) >= max_examples:
                     break
             os.makedirs(os.path.dirname(cache_name), exist_ok=True)

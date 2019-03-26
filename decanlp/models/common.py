@@ -339,11 +339,28 @@ class PackedLSTM(nn.Module):
         self.batch_first = batch_first
 
     def forward(self, inputs, lengths, hidden=None):
+        batch_size = inputs.size(0) if self.batch_first else inputs.size(1)
+        max_len = inputs.size(1) if self.batch_first else inputs.size(0)
         lens, indices = torch.sort(inputs.new_tensor(lengths, dtype=torch.long), 0, True)
         inputs = inputs[indices] if self.batch_first else inputs[:, indices] 
         outputs, (h, c) = self.rnn(pack(inputs, lens.tolist(), 
             batch_first=self.batch_first), hidden)
         outputs = unpack(outputs, batch_first=self.batch_first)[0]
+        output_size = outputs.size(1) if self.batch_first else outputs.size(0)
+
+        # the out_put size after packing and unpacking the sequences is determined by the max length in the sequence
+        # thus if you have extra padding in the input it will be truncated in the output
+        # we to fix this here
+
+        if output_size < max_len:
+            zeros_tensor = torch.zeros(batch_size, max_len-output_size, outputs.size(-1))
+            if not self.batch_first:
+                zeros_tensor = torch.transpose(zeros_tensor, 0, 1)
+            if self.batch_first:
+                outputs = torch.cat([outputs, zeros_tensor], dim=1)
+            else:
+                outputs = torch.cat([outputs, zeros_tensor], dim=0)
+
         _, _indices = torch.sort(indices, 0)
         outputs = outputs[_indices] if self.batch_first else outputs[:, _indices]
         h, c = h[:, _indices, :], c[:, _indices, :]

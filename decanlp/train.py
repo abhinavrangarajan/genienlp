@@ -231,7 +231,7 @@ def prepare_data(args, field, logger, device):
 
         torch.save({'train_examples': train_sets[0].examples, 'val_examples': val_sets[0].examples} , os.path.join(args.save, 'train_sets_saved'))
 
-    return FIELD, train_sets, val_sets, aux_sets, data_dict
+    return FIELD, train_sets, val_sets, aux_sets
 
 
 def to_iter(args, world_size, val_batch_size, data, device, train=True, token_testing=False, save_embedded_data=False, sort=None):
@@ -488,7 +488,7 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
 def run(args, run_args, rank=0, world_size=1):
     device = set_seed(args, rank=rank)
     logger = initialize_logger(args, rank)
-    field, train_sets, val_sets, aux_sets, pre_embedded_data, save_dict = run_args
+    field, train_sets, val_sets, aux_sets, save_dict = run_args
 
     logger.start = time.time()
 
@@ -565,11 +565,11 @@ def main(argv=sys.argv):
         logger.info(f'Loading field from {os.path.join(args.save, args.load)}')
         save_dict = torch.load(os.path.join(args.save, args.load))
         field = save_dict['field']
-    field, train_sets, val_sets, aux_sets, pre_embedded_data = prepare_data(args, field, logger, device)
+    field, train_sets, val_sets, aux_sets = prepare_data(args, field, logger, device)
     if (args.use_curriculum and aux_sets is None) or (not args.use_curriculum and len(aux_sets)):
         logging.error('sth unpleasant is happening with curriculum')
     if not args.save_embedded_data:
-        run_args = (field, train_sets, val_sets, aux_sets, pre_embedded_data, save_dict)
+        run_args = (field, train_sets, val_sets, aux_sets, save_dict)
         if len(args.devices) > 1:
             logger.info(f'Multiprocessing')
             mp = Multiprocess(run, args)

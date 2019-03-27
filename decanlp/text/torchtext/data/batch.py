@@ -40,7 +40,7 @@ class Batch(object):
                     setattr(self, f'{name}_limited', limited_entry)
                     setattr(self, f'{name}_elmo', [[s.strip() for s in l] for l in raw])
 
-                    if self.args.load_embedded_data:
+                    if self.args.load_embedded_data and name == 'context' or name == 'question':
                         bert_embeddings = torch.stack([x.__dict__[f'{name}_bert'] for x in data], dim=0)
                         setattr(self, f'{name}_bert', bert_embeddings)
 

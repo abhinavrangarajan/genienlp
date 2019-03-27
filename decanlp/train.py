@@ -176,41 +176,40 @@ def prepare_data(args, field, logger, device):
         limited_idx_to_full_idx = deepcopy(FIELD.decoder_to_vocab)
         batch_size = args.val_batch_size[0]
         logger.info(f'Caching Bert embeddings with batch_size: {batch_size}')
-        names = ['context', 'question', 'answer', 'context_special', 'question_special', 'context_question']
+        names = ['context', 'question']
         train_size = len(train_sets[0].examples)
         logger.info('Caching Bert embeddings for training set')
         for i in tqdm(range(math.ceil(train_size/batch_size))):
             example = train_sets[0].examples[i*batch_size:min((i+1)*batch_size, train_size)]
             for name in names:
                 batch = [ex.__dict__[name] for ex in example]
-                entry, lengths, limited_entry, raw = FIELD.process(batch, device='cpu', train=True,
+                entry, lengths, limited_entry, raw = FIELD.process(batch, device=device, train=True,
                                                                    limited=FIELD.decoder_stoi, l2f=limited_idx_to_full_idx, oov2l=oov_to_limited_idx)
 
-                if args.bert_embedding and args.save_embedded_data and name != 'answer':
+                entry_tensor = entry.to(device)
+                segments_entry_ids = torch.zeros_like(entry_tensor)
 
-                    entry_tensor = entry.to(device)
-                    segments_entry_ids = torch.zeros_like(entry_tensor)
+                with torch.no_grad():
+                    encoded_layers_entry, _ = bert_model(entry_tensor, segments_entry_ids)
 
-                    with torch.no_grad():
-                        encoded_layers_entry, _ = bert_model(entry_tensor, segments_entry_ids)
-
-                    if args.bert_layer != -1:
-                        encoded_layer_entry = encoded_layers_entry[args.bert_layer]
-                    else:
-                        if args.bert_layer_pooling == 'mean':
-                            num_layers = len(encoded_layers_entry)
-                            encoded_layer_entry = encoded_layers_entry[0]
-                            if num_layers > 1:
-                                for i in range(1, num_layers):
-                                    encoded_layer_entry += encoded_layers_entry[i]
-                            encoded_layer_entry /= num_layers
-                            # encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
-                        elif args.bert_layer_pooling == 'sum':
-                            num_layers = len(encoded_layers_entry)
-                            encoded_layer_entry = encoded_layers_entry[0]
-                            if num_layers > 1:
-                                for i in range(1, num_layers):
-                                    encoded_layer_entry += encoded_layers_entry[i]
+                if args.bert_layer != -1:
+                    encoded_layer_entry = encoded_layers_entry[args.bert_layer]
+                else:
+                    if args.bert_layer_pooling == 'mean':
+                        # num_layers = len(encoded_layers_entry)
+                        # encoded_layer_entry = encoded_layers_entry[0]
+                        # if num_layers > 1:
+                        #     for i in range(1, num_layers):
+                        #         encoded_layer_entry += encoded_layers_entry[i]
+                        # encoded_layer_entry /= num_layers
+                        encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                    elif args.bert_layer_pooling == 'sum':
+                        # num_layers = len(encoded_layers_entry)
+                        # encoded_layer_entry = encoded_layers_entry[0]
+                        # if num_layers > 1:
+                        #     for i in range(1, num_layers):
+                        #         encoded_layer_entry += encoded_layers_entry[i]
+                        encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
 
                 for j, ex in enumerate(example):
                     setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
@@ -222,24 +221,23 @@ def prepare_data(args, field, logger, device):
             example = val_sets[0].examples[i*batch_size:min((i+1)*batch_size, val_size)]
             for name in names:
                 batch = [ex.__dict__[name] for ex in example]
-                entry, lengths, limited_entry, raw = FIELD.process(batch, device='cpu', train=True,
+                entry, lengths, limited_entry, raw = FIELD.process(batch, device=device, train=True,
                                                                    limited=FIELD.decoder_stoi, l2f=limited_idx_to_full_idx, oov2l=oov_to_limited_idx)
 
-                if args.bert_embedding and args.save_embedded_data and name != 'answer':
+                entry_tensor = entry.to(device)
+                segments_entry_ids = torch.zeros_like(entry_tensor)
 
-                    entry_tensor = entry.to(device)
-                    segments_entry_ids = torch.zeros_like(entry_tensor)
+                with torch.no_grad():
+                    encoded_layers_entry, _ = bert_model(entry_tensor, segments_entry_ids)
 
-                    with torch.no_grad():
-                        encoded_layers_entry, _ = bert_model(entry_tensor, segments_entry_ids)
+                if args.bert_layer != -1:
+                    encoded_layer_entry = encoded_layers_entry[args.bert_layer]
+                else:
+                    if args.bert_layer_pooling == 'mean':
+                        encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                    elif args.bert_layer_pooling == 'sum':
+                        encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
 
-                    if args.bert_layer != -1:
-                        encoded_layer_entry = encoded_layers_entry[args.bert_layer]
-                    else:
-                        if args.bert_layer_pooling == 'mean':
-                            encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
-                        elif args.bert_layer_pooling == 'sum':
-                            encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
                 for j, ex in enumerate(example):
                     setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
 

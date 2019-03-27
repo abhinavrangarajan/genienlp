@@ -23,10 +23,6 @@ class Batch(object):
         self.field = list(dataset.fields.values())[0]
         self.args = args
 
-        # start bert model
-        if self.args.bert_embedding:
-            self.init_model()
-
     def batch(self, data):
         self.batch_size = len(data)
         limited_idx_to_full_idx = deepcopy(self.field.decoder_to_vocab) # should avoid this with a conditional in map to full
@@ -52,13 +48,6 @@ class Batch(object):
         setattr(self, f'oov_to_limited_idx', oov_to_limited_idx)
 
         return self
-
-    def init_model(self):
-        bert_model = BertModel.from_pretrained('bert-large-cased')
-        bert_model.eval()
-        bert_model.to(self.device)
-        self.bert_model = bert_model
-
 
     @classmethod
     def fromvars(cls, dataset, batch_size, train=True, **kwargs):

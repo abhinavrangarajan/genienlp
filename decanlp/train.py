@@ -34,6 +34,7 @@ import math
 import time
 import sys
 from copy import deepcopy
+from tqdm import tqdm
 
 import logging
 from pprint import pformat
@@ -174,9 +175,11 @@ def prepare_data(args, field, logger, device):
         oov_to_limited_idx = {}
         limited_idx_to_full_idx = deepcopy(FIELD.decoder_to_vocab)
         batch_size = args.val_batch_size[0]
+        logger.info(f'Caching Bert embeddings with batch_size: {batch_size}')
         names = ['context', 'question', 'answer', 'context_special', 'question_special', 'context_question']
         train_size = len(train_sets[0].examples)
-        for i in range(math.ceil(train_size/batch_size)):
+        logger.info('Caching Bert embeddings for training set')
+        for i in tqdm(range(math.ceil(train_size/batch_size))):
             example = train_sets[0].examples[i*batch_size:min((i+1)*batch_size, train_size)]
             for name in names:
                 batch = [ex.__dict__[name] for ex in example]
@@ -195,15 +198,27 @@ def prepare_data(args, field, logger, device):
                         encoded_layer_entry = encoded_layers_entry[args.bert_layer]
                     else:
                         if args.bert_layer_pooling == 'mean':
-                            encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                            num_layers = len(encoded_layers_entry)
+                            encoded_layer_entry = encoded_layers_entry[0]
+                            if num_layers > 1:
+                                for i in range(1, num_layers):
+                                    encoded_layer_entry += encoded_layers_entry[i]
+                            encoded_layer_entry /= num_layers
+                            # encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
                         elif args.bert_layer_pooling == 'sum':
-                            encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
+                            num_layers = len(encoded_layers_entry)
+                            encoded_layer_entry = encoded_layers_entry[0]
+                            if num_layers > 1:
+                                for i in range(1, num_layers):
+                                    encoded_layer_entry += encoded_layers_entry[i]
+
                 for j, ex in enumerate(example):
                     setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
 
 
         val_size = len(val_sets[0].examples)
-        for i in range(math.ceil(val_size/batch_size)):
+        logger.info('Caching Bert embeddings for validation set')
+        for i in tqdm(range(math.ceil(val_size/batch_size))):
             example = val_sets[0].examples[i*batch_size:min((i+1)*batch_size, val_size)]
             for name in names:
                 batch = [ex.__dict__[name] for ex in example]

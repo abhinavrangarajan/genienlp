@@ -88,7 +88,7 @@ def prepare_data(args, field, logger, device):
     if field is None:
         logger.info(f'Constructing field')
         if args.bert_embedding:
-            FIELD = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True)
+            FIELD = torchtext.data.BertField(model_name=args.bert_model, batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True)
         else:
             FIELD = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
 
@@ -169,8 +169,7 @@ def prepare_data(args, field, logger, device):
 
 
     if args.save_embedded_data:
-
-        bert_model = BertModel.from_pretrained('bert-large-cased')
+        bert_model = BertModel.from_pretrained(args.bert_model)
         bert_model.eval()
         bert_model.to(device)
         oov_to_limited_idx = {}
@@ -233,7 +232,7 @@ def prepare_data(args, field, logger, device):
                     setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
 
 
-            torch.save({'train_examples': train_sets[0].examples, 'val_examples': val_sets[0].examples} , os.path.join(args.save, 'train_sets_saved'))
+        torch.save({'train_examples': train_sets[0].examples, 'val_examples': val_sets[0].examples} , os.path.join(args.save, args.bert_save))
 
     return FIELD, train_sets, val_sets, aux_sets
 

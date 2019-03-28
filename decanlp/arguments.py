@@ -64,6 +64,7 @@ def parse(argv):
     parser.add_argument('--save', default='results', type=str, help='where to save results.')
     parser.add_argument('--embeddings', default='.embeddings', type=str, help='where to save embeddings.')
     parser.add_argument('--cached', default='', type=str, help='where to save cached files')
+    parser.add_argument('--bert_save', default='bert_cached', type=str, help='where to save bert cached files')
 
     parser.add_argument('--train_tasks', nargs='+', type=str, dest='train_task_names', help='tasks to use for training', required=True)
     parser.add_argument('--train_iterations', nargs='+', type=int, help='number of iterations to focus on each task')
@@ -93,6 +94,10 @@ def parse(argv):
     parser.add_argument('--preserve_case', action='store_false', dest='lower', help='whether to preserve casing for all text')
 
     parser.add_argument('--model', type=str, default='MultitaskQuestionAnsweringNetwork', help='which model to import')
+    parser.add_argument('--bert_model', type=str, default='bert-large-uncased',
+                        choices=['bert-base-uncased', 'bert-large-uncased', 'bert-base-cased',
+                                 'bert-large-cased', 'bert-base-multilingual-uncased', 'bert-base-multilingual-cased'],
+                        help='which BertModel and BertTokenizer to import')
     parser.add_argument('--dimension', default=200, type=int, help='output dimensions for all layers')
     parser.add_argument('--rnn_layers', default=1, type=int, help='number of layers for RNN modules')
     parser.add_argument('--transformer_layers', default=2, type=int, help='number of layers for transformer modules')

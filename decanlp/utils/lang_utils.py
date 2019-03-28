@@ -90,6 +90,7 @@ def entity_tokens():
     expanded_entities = []
     for token in ENTITIES:
         expanded_entities.extend([f'{token}_{i}' for i in range(5)])
-    additional_tokens = ['ThingTalk']
+    additional_tokens = ['Translate', 'English', 'ThingTalk']
+    special_tokens = ['Context: ', 'Question: ']
     expanded_entities.extend(additional_tokens)
     return expanded_entities

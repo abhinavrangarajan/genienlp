@@ -87,9 +87,11 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
 
         if args.bert_embedding:
-            # self.bert_projection = Feedforward(768, args.dimension, dropout=0.0)
-            self.bert_projection = Feedforward(1024, args.dimension, dropout=0.0)
-            bert_model = BertModel.from_pretrained('bert-large-cased')
+            if 'base' in args.bert_model:
+                self.bert_projection = Feedforward(768, args.dimension, dropout=0.0)
+            else:
+                self.bert_projection = Feedforward(1024, args.dimension, dropout=0.0)
+            bert_model = BertModel.from_pretrained(args.bert_model)
             bert_model.eval()
             bert_model.to(self.device)
             self.bert_model = bert_model

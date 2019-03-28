@@ -455,7 +455,7 @@ class SubwordField(ReversibleField):
 class BertField(Field):
 
     def __init__(
-            self, sequential=True, use_vocab=True, init_token=None,
+            self, model_name, sequential=True, use_vocab=True, init_token=None,
             eos_token=None, fix_length=None, tensor_type=torch.LongTensor,
             preprocessing=None, postprocessing=None, lower=False,
             tokenize=(lambda s: s.split()), include_lengths=False,
@@ -466,7 +466,7 @@ class BertField(Field):
         self.detokenize = None
 
         from ....utils.tokenization import BertTokenizer
-        bert_tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
+        bert_tokenizer = BertTokenizer.from_pretrained(model_name)
         setattr(bert_tokenizer.basic_tokenizer, 'do_lower_case', lower)
         self.tokenizer = bert_tokenizer
 

@@ -23,7 +23,10 @@ records
 babel
 tabulate
 
+pytorch_pretrained_bert
+
 -e git+git://github.com/salesforce/cove.git#egg=cove
 allennlp
 
 dill
+

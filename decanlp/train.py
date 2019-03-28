@@ -58,6 +58,7 @@ from .multiprocess import Multiprocess, DistributedDataParallel
 from .util import elapsed_time, batch_fn, set_seed, preprocess_examples, get_trainable_params, count_params
 from .utils.saver import Saver
 from .utils.embeddings import load_embeddings
+from pytorch_pretrained_bert import BertModel
 
 
 def initialize_logger(args, rank='main'):
@@ -87,7 +88,7 @@ def prepare_data(args, field, logger, device):
     if field is None:
         logger.info(f'Constructing field')
         if args.bert_embedding:
-            FIELD = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True, fix_length=args.max_output_length if args.save_embedded_data or args.load_embedded_data else None)
+            FIELD = torchtext.data.BertField(batch_first=True, init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]', lower=args.lower, include_lengths=True)
         else:
             FIELD = torchtext.data.ReversibleField(batch_first=True, init_token='<init>', eos_token='<eos>', lower=args.lower, include_lengths=True)
 
@@ -168,7 +169,7 @@ def prepare_data(args, field, logger, device):
 
 
     if args.save_embedded_data:
-        from pytorch_pretrained_bert import BertModel
+
         bert_model = BertModel.from_pretrained('bert-large-cased')
         bert_model.eval()
         bert_model.to(device)
@@ -196,24 +197,13 @@ def prepare_data(args, field, logger, device):
                     encoded_layer_entry = encoded_layers_entry[args.bert_layer]
                 else:
                     if args.bert_layer_pooling == 'mean':
-                        # num_layers = len(encoded_layers_entry)
-                        # encoded_layer_entry = encoded_layers_entry[0]
-                        # if num_layers > 1:
-                        #     for i in range(1, num_layers):
-                        #         encoded_layer_entry += encoded_layers_entry[i]
-                        # encoded_layer_entry /= num_layers
                         encoded_layer_entry = torch.mean(torch.stack(encoded_layers_entry, dim=0), dim=0)
                     elif args.bert_layer_pooling == 'sum':
-                        # num_layers = len(encoded_layers_entry)
-                        # encoded_layer_entry = encoded_layers_entry[0]
-                        # if num_layers > 1:
-                        #     for i in range(1, num_layers):
-                        #         encoded_layer_entry += encoded_layers_entry[i]
                         encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
 
+                encoded_layer_entry = encoded_layer_entry.cpu()
                 for j, ex in enumerate(example):
                     setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
-
 
         val_size = len(val_sets[0].examples)
         logger.info('Caching Bert embeddings for validation set')
@@ -238,11 +228,12 @@ def prepare_data(args, field, logger, device):
                     elif args.bert_layer_pooling == 'sum':
                         encoded_layer_entry = torch.sum(torch.stack(encoded_layers_entry, dim=0), dim=0)
 
+                encoded_layer_entry = encoded_layer_entry.cpu()
                 for j, ex in enumerate(example):
                     setattr(ex, f'{name}_bert', encoded_layer_entry[j, ...])
 
 
-        torch.save({'train_examples': train_sets[0].examples, 'val_examples': val_sets[0].examples} , os.path.join(args.save, 'train_sets_saved'))
+            torch.save({'train_examples': train_sets[0].examples, 'val_examples': val_sets[0].examples} , os.path.join(args.save, 'train_sets_saved'))
 
     return FIELD, train_sets, val_sets, aux_sets
 
@@ -274,7 +265,7 @@ def get_learning_rate(i, args):
 def step(model, batch, opt, iteration, field, task, args, lr=None, grad_clip=None):
     model.train()
     opt.zero_grad()
-    loss, predictions, ret = model(batch, iteration)
+    loss, predictions = model(batch, iteration)
     loss.backward()
     if lr is not None:
         opt.param_groups[0]['lr'] = lr
@@ -284,7 +275,7 @@ def step(model, batch, opt, iteration, field, task, args, lr=None, grad_clip=Non
     opt.step()
     if torch.isnan(loss).item():
         raise ValueError('Found NaN loss')
-    return loss.item(), {}, grad_norm, ret
+    return loss.item(), {}, grad_norm
 
 
 def update_fraction(args, task_iteration):
@@ -403,7 +394,8 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                                 for metric_key, metric_value in metric_dict.items():
                                     writer.add_scalar(f'{metric_key}/{val_task.name}/val', metric_value, iteration)
                                     writer.add_scalar(f'{val_task.name}/{metric_key}/val', metric_value, iteration)
-                        writer.add_scalar('deca/val', deca_score, iteration)
+                        if writer is not None:
+                            writer.add_scalar('deca/val', deca_score, iteration)
                         logger.info(f'{args.timestamp}:{elapsed_time(logger)}:iteration_{iteration}:{round_progress}train_{task.name}:{task_progress}val_deca:deca_{deca_score:.2f}')
 
                     # saving
@@ -437,7 +429,7 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                         lr = get_learning_rate(iteration, args) 
 
                     # param update
-                    loss, train_metric_dict, grad_norm, ret = step(model, batch, opt, iteration, field, task, args, lr=lr, grad_clip=args.grad_clip)
+                    loss, train_metric_dict, grad_norm = step(model, batch, opt, iteration, field, task, args, lr=lr, grad_clip=args.grad_clip)
 
 
                     # update curriculum fraction

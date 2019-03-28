@@ -178,6 +178,12 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             context_embedded = self.bert_projection(encoded_layer_context)
             question_embedded = self.bert_projection(encoded_layer_question)
 
+            max_context_length = max(context_lengths)
+            max_question_length = max(question_lengths)
+
+            context_embedded = context_embedded[:, :max_context_length, :]
+            question_embedded = question_embedded[:, :max_question_length, :]
+
         else:
 
             if -1 not in self.args.elmo:
@@ -262,12 +268,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
                 loss = F.nll_loss(probs.log(), targets)
 
-            if self.args.save_embedded_data:
-                ret = {'encoded_layer_context': encoded_layer_context, 'context_lengths': context_lengths,
-                       'encoded_layer_question': encoded_layer_question, 'question_lengths': question_lengths}
-                return loss, None, ret
-            else:
-                return loss, None, {}
+                return loss, None
 
         else:
             return None, self.greedy(self_attended_context, final_context, final_question, 

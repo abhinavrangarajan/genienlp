@@ -3,6 +3,16 @@ from copy import deepcopy
 from pytorch_pretrained_bert import BertModel
 import torch
 
+def pad_bert_embeddings(batch):
+
+    lengths = [tensor.size(0) for tensor in batch]
+    max_len = max(lengths)
+    new_batch = []
+    for i, tensor in enumerate(batch):
+        new_batch.append(torch.cat([tensor, torch.zeros((max_len-lengths[i], tensor.size(-1)))], dim=0))
+
+    return torch.stack(new_batch, dim=0)
+
 class Batch(object):
     """Defines a batch of examples along with its Fields.
 
@@ -41,7 +51,8 @@ class Batch(object):
                     setattr(self, f'{name}_elmo', [[s.strip() for s in l] for l in raw])
 
                     if self.args.load_embedded_data and name == 'context' or name == 'question':
-                        bert_embeddings = torch.stack([x.__dict__[f'{name}_bert'] for x in data], dim=0)
+                        batch_bert = [x.__dict__[f'{name}_bert'] for x in data]
+                        bert_embeddings = pad_bert_embeddings(batch_bert)
                         setattr(self, f'{name}_bert', bert_embeddings)
 
         setattr(self, f'limited_idx_to_full_idx', limited_idx_to_full_idx)

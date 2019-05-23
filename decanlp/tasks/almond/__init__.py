@@ -68,11 +68,15 @@ class AlmondDataset(generic_dataset.CQA):
             with open(path, 'r', encoding='utf-8') as fp:
                 lines = []
                 for line in fp:
-                        splitted_line = line.strip().split('\t')
-                        if len(splitted_line) == 3:
-                            lines.append(splitted_line)
-                        else:
-                            print(f'{line} is not parsable')
+                    splitted_line = line.strip().split('\t')
+                    if len(splitted_line) == 3:
+                        lines.append(splitted_line)
+                    else:
+                        print(f'{line} is not parsable')
+
+            # remove BOM
+            if lines[0][1].startswith('\ufeff'):
+                lines[0][1] = lines[0][1][1:]
 
             if context_switch:
                 thingpedia = kwargs.pop('thingpedia')
@@ -80,10 +84,6 @@ class AlmondDataset(generic_dataset.CQA):
 
             max_examples = min(len(lines), subsample) if subsample is not None else len(lines)
             for _id, sentence, target_code in tqdm(lines, total=max_examples):
-                # remove BOM
-                if lines[0][1].startswith('\ufeff'):
-                    lines[0][1] = lines[0][1][1:]
-
                 if context_switch:
                     if reverse_task:
                         answer = sentence

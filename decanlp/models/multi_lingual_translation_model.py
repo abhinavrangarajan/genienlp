@@ -51,12 +51,7 @@ class MultiLingualTranslationModel(nn.Module):
         self.args = args
         self.device = set_seed(args)
 
-        if args.use_google_translate:
-            model_names = ['semantic_parser', 'thingtalk_machine_translation']
-        else:
-            model_names = ['machine_translation', 'semantic_parser', 'thingtalk_machine_translation']
-
-        for name in model_names:
+        for name in ['semantic_parser']:
 
             model_dict = torch.load(os.path.join(args.saved_models, f'{name}/best.pth'), map_location=self.device)
             model_field = model_dict['field']

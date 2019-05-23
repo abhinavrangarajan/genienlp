@@ -149,6 +149,7 @@ def parse(argv):
                         help="which grammar to use for Almond task (leave unspecified for no grammar)")
     parser.add_argument('--question', type=str, help='provide a fixed question')
     parser.add_argument('--use_google_translate', action='store_true', help='use google translate instead of pre-trained machine translator')
+    parser.add_argument('--source_lang', type=str, default='en', help='second language used in multi-lingual model')
 
     args = parser.parse_args(argv[1:])
     if args.model is None:
@@ -167,9 +168,6 @@ def parse(argv):
         logger.error('multi-gpu training is currently a work in progress')
         return
     args.timestamp = '-'.join(datetime.datetime.now(tz=tz.tzoffset(None, -8*60*60)).strftime("%y/%m/%d/%H/%M/%S.%f").split())
-
-    if args.use_google_translate:
-        args.data = args.data + '_google_translate'
 
     if len(args.train_task_names) > 1:
         if args.train_iterations is None:

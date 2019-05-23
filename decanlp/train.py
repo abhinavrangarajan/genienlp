@@ -97,6 +97,11 @@ def prepare_data(args, field, logger):
         kwargs['cached_path'] = args.cached
 
         logger.info(f'Adding {task.name} to training datasets')
+        if args.use_google_translate:
+            from .utils.google_translate import google_translate
+            target_path = args.data + '_google_translate'
+            google_translate(args, task, target_path)
+            args.data = target_path
         split = task.get_splits(FIELD, args.data, **kwargs)
         if args.use_curriculum:
             assert len(split) == 2

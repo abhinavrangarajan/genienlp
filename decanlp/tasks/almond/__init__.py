@@ -62,10 +62,18 @@ class AlmondDataset(generic_dataset.CQA):
         else:
             examples = []
 
-            n = 0
             with open(path, 'r', encoding='utf-8') as fp:
+                lines = []
                 for line in fp:
-                    n += 1
+                    splitted_line = line.strip().split('\t')
+                    if len(splitted_line) >= 3:
+                        lines.append(splitted_line)
+                    else:
+                        print(f'{line} is not parsable')
+
+            # remove BOM
+            if lines[0][1].startswith('\ufeff'):
+                lines[0][1] = lines[0][1][1:]
 
             if thingpedia_in_context:
                 thingpedia = kwargs.pop('thingpedia')
@@ -73,22 +81,16 @@ class AlmondDataset(generic_dataset.CQA):
             else:
                 words_list = None
 
-            max_examples = min(n, subsample) if subsample is not None else n
-            for i, line in tqdm(enumerate(open(path, 'r', encoding='utf-8')), total=max_examples):
+            max_examples = min(len(lines), subsample) if subsample is not None else len(lines)
+            for i, line in tqdm(enumerate(lines), total=max_examples):
                 if i >= max_examples:
                     break
 
-                parts = line.strip().split('\t')
-
                 if contextual:
-                    _id, context, sentence, target_code = parts
+                    _id, context, sentence, target_code = line
                 else:
-                    _id, sentence, target_code = parts
+                    _id, sentence, target_code = line
                     context = ''
-
-                # remove BOM
-                if sentence.startswith('\ufeff'):
-                    sentence = sentence[1:]
 
                 if thingpedia_in_context:
                     if contextual:
@@ -119,8 +121,7 @@ class AlmondDataset(generic_dataset.CQA):
                 examples.append(data.Example.fromlist(
                     [context, question, answer, generic_dataset.CONTEXT_SPECIAL, generic_dataset.QUESTION_SPECIAL, context_question], fields,
                     tokenize=tokenize))
-                if len(examples) >= max_examples:
-                    break
+
             os.makedirs(os.path.dirname(cache_name), exist_ok=True)
             logger.info(f'Caching data to {cache_name}')
             torch.save(examples, cache_name)

@@ -97,6 +97,8 @@ def prepare_data(args, field, logger):
         kwargs['cached_path'] = args.cached
 
         logger.info(f'Adding {task.name} to training datasets')
+        if args.question:
+            kwargs['question'] = args.question
         split = task.get_splits(FIELD, args.data, **kwargs)
         if args.use_curriculum:
             assert len(split) == 2
@@ -118,6 +120,8 @@ def prepare_data(args, field, logger):
         kwargs['cached_path'] = args.cached
 
         logger.info(f'Adding {task.name} to validation datasets')
+        if args.question:
+            kwargs['question'] = args.question
         split = task.get_splits(FIELD, args.data, **kwargs)
         assert len(split) == 1
         logger.info(f'{task.name} has {len(split[0])} validation examples')

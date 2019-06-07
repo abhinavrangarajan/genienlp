@@ -99,7 +99,7 @@ def prepare_data(args, field, logger):
         logger.info(f'Adding {task.name} to training datasets')
         if args.use_google_translate:
             from .utils.google_translate import google_translate
-            target_path = args.data + '_google_translate'
+            target_path = args.data.rsplit('/', 1)[0] + '_google_translate/'
             google_translate(args, task, target_path)
             args.data = target_path
         split = task.get_splits(FIELD, args.data, **kwargs)

@@ -37,10 +37,6 @@ def google_translate(args, task, target_path):
 
     translate_client = translate.Client()
 
-    # location = 'global'
-    # text = 'please marry me!'
-    # parent = client.location_path('cs294s-project-1556577754760', location)
-
     target = 'en'
 
     source_path = os.path.join(args.data, task.name)

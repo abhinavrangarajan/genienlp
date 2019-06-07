@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018, Salesforce, Inc.
+# Copyright (c) 2018, The Board of Trustees of the Leland Stanford Junior University
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -27,8 +27,45 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from .multitask_question_answering_network import MultitaskQuestionAnsweringNetwork
-from .multi_lingual_translation_model import MultiLingualTranslationModel
-from .coattentive_pointer_generator import CoattentivePointerGenerator
-from .self_attentive_pointer_generator import SelfAttentivePointerGenerator
-from .pointer_generator import PointerGenerator
+
+from argparse import ArgumentParser
+import torch
+import numpy as np
+import random
+import logging
+import sys
+from pprint import pformat
+
+from .text import torchtext
+
+logger = logging.getLogger(__name__)
+
+
+def get_args(argv):
+    parser = ArgumentParser(prog=argv[0])
+    parser.add_argument('--seed', default=123, type=int, help='Random seed.')
+    parser.add_argument('--embeddings', default='./decaNLP/.embeddings', type=str, help='where to save embeddings.')
+    parser.add_argument('--small_glove', action='store_true', help='Cache glove.6B.50d')
+    parser.add_argument('--large_glove', action='store_true', help='Cache glove.840B.300d')
+    parser.add_argument('--char', action='store_true', help='Cache character embeddings')
+
+    args = parser.parse_args(argv[1:])
+    return args
+
+
+def main(argv=sys.argv):
+    args = get_args(argv)
+    logger.info(f'Arguments:\n{pformat(vars(args))}')
+
+    np.random.seed(args.seed)
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+
+    if args.char:
+        torchtext.vocab.CharNGram(cache=args.embeddings)
+    if args.small_glove:
+        torchtext.vocab.GloVe(cache=args.embeddings, name="6B", dim=50)
+    if args.large_glove:
+        torchtext.vocab.GloVe(cache=args.embeddings)
+

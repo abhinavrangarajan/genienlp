@@ -45,7 +45,6 @@ from .grammar import thingtalk, plainthingtalk, posthingtalk
 logger = logging.getLogger(__name__)
 
 
-
 class AlmondDataset(generic_dataset.CQA):
     """Obtaining dataset for Almond semantic parsing task"""
 
@@ -53,6 +52,8 @@ class AlmondDataset(generic_dataset.CQA):
     name = 'almond'
 
     def __init__(self, path, field, tokenize, context_switch=False, reverse_task=False, subsample=None, **kwargs):
+        target_question = kwargs.pop('question', None)
+
         fields = [(x, field) for x in self.fields]
         cached_path = kwargs.pop('cached_path')
         cache_name = os.path.join(cached_path, os.path.dirname(path).strip("/"), '.cache', os.path.basename(path), str(subsample))
@@ -64,8 +65,14 @@ class AlmondDataset(generic_dataset.CQA):
         else:
             examples = []
 
-            with open(path, 'r') as fp:
-                lines = [line.strip().split('\t') for line in fp]
+            with open(path, 'r', encoding='utf-8') as fp:
+                lines = []
+                for line in fp:
+                        splitted_line = line.strip().split('\t')
+                        if len(splitted_line) == 3:
+                            lines.append(splitted_line)
+                        else:
+                            print(f'{line} is not parsable')
 
             if context_switch:
                 thingpedia = kwargs.pop('thingpedia')
@@ -73,6 +80,10 @@ class AlmondDataset(generic_dataset.CQA):
 
             max_examples = min(len(lines), subsample) if subsample is not None else len(lines)
             for _id, sentence, target_code in tqdm(lines, total=max_examples):
+                # remove BOM
+                if lines[0][1].startswith('\ufeff'):
+                    lines[0][1] = lines[0][1][1:]
+
                 if context_switch:
                     if reverse_task:
                         answer = sentence
@@ -87,13 +98,14 @@ class AlmondDataset(generic_dataset.CQA):
                     # the question is irrelevant, so the question says English and ThingTalk even if we're doing
                     # a different language (like Chinese)
                     if reverse_task:
-                        question = 'Translate from ThingTalk to English'
+                        question = target_question if target_question is not None else 'Translate from ThingTalk to English'
                         context = target_code
                         answer = sentence
                     else:
-                        question = 'Translate from English to ThingTalk'
+                        question = target_question if target_question is not None else 'Translate from English to ThingTalk'
                         context = sentence
                         answer = target_code
+
 
                 context_question = generic_dataset.get_context_question(context, question)
                 examples.append(data.Example.fromlist(
@@ -159,6 +171,7 @@ class Almond(BaseTask):
         self._thingpedia = args.thingpedia
         self._grammar = None
         self._grammar_direction = None
+        self.args = args
 
         if args.almond_grammar:
             self._grammar_direction = args.almond_grammar.split('.')[-1]
@@ -178,6 +191,8 @@ class Almond(BaseTask):
         return ['em', 'nem', 'nf1', 'fm', 'dm', 'bleu']
 
     def get_splits(self, field, root, **kwargs):
+        if self.args.question is not None:
+            kwargs['question'] = self.args.question
         return AlmondDataset.splits(
             fields=field, root=root, tokenize=self.tokenize, reverse_task=False, **kwargs)
 

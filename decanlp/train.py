@@ -38,9 +38,8 @@ from copy import deepcopy
 import logging
 from pprint import pformat
 from logging import handlers
-from collections import defaultdict
 import numpy as np
-import itertools
+from .utils.model_utils import init_model
 
 import torch
 
@@ -49,10 +48,9 @@ from .text import torchtext
 from tensorboardX import SummaryWriter
 
 from . import arguments
-from . import models
 from .validate import validate
-from .multiprocess import Multiprocess, DistributedDataParallel
-from .util import elapsed_time, batch_fn, set_seed, preprocess_examples, get_trainable_params, count_params
+from .multiprocess import Multiprocess
+from .util import elapsed_time, batch_fn, set_seed, preprocess_examples, get_trainable_params
 from .utils.saver import Saver
 from .utils.embeddings import load_embeddings
 
@@ -172,20 +170,29 @@ def get_learning_rate(i, args):
         transformer_lr = transformer_lr * math.sqrt(args.dimension * args.warmup) * args.sgd_lr
     return transformer_lr
 
-
-def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, writer=None, it=None):
+def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, writer=None, it=None, rank=0):
     model.train()
     opt.zero_grad()
     loss, predictions = model(batch, iteration)
     loss.backward()
+    trainable_params = get_trainable_params(model, name=True)
+    logger = log(rank)
+    Flag = False
+    for name, param in trainable_params:
+        if param.grad is not None and torch.isnan(param.grad).any():
+            logger.warning(f'param name is: {name}')
+            logger.warning(f'param value is: {param}')
+            logger.warning(f'param gradient is: {param.grad}')
+            Flag = True
+    if Flag:
+        return None, {}, None
     if lr is not None:
         opt.param_groups[0]['lr'] = lr
     grad_norm = None
     if grad_clip > 0.0:
         grad_norm = torch.nn.utils.clip_grad_norm_(model.params, grad_clip)
     opt.step()
-    if torch.isnan(loss).item():
-        raise ValueError('Found NaN loss')
+
     return loss.item(), {}, grad_norm
 
 
@@ -237,6 +244,9 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
         aux_iters = [(name, to_iter(args, world_size, tok, x, device, token_testing=args.token_testing))
                           for name, x, tok in zip(args.train_tasks, aux_sets, args.train_batch_tokens)]
         aux_iters = [(task, iter(aux_iter)) for task, aux_iter in aux_iters]
+
+    zero_loss = 0
+    logger.info(f'Begin Training')
 
     while True:
 
@@ -304,7 +314,8 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                                 for metric_key, metric_value in metric_dict.items():
                                     writer.add_scalar(f'{metric_key}/{val_task.name}/val', metric_value, iteration)
                                     writer.add_scalar(f'{val_task.name}/{metric_key}/val', metric_value, iteration)
-                        writer.add_scalar('deca/val', deca_score, iteration)
+                        if writer is not None:
+                            writer.add_scalar('deca/val', deca_score, iteration)
                         logger.info(f'{args.timestamp}:{elapsed_time(logger)}:iteration_{iteration}:{round_progress}train_{task.name}:{task_progress}val_deca:deca_{deca_score:.2f}')
 
                     # saving
@@ -338,7 +349,17 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                         lr = get_learning_rate(iteration, args) 
 
                     # param update
-                    loss, train_metric_dict, grad_norm = step(model, batch, opt, iteration, field, task, lr=lr, grad_clip=args.grad_clip, writer=writer, it=train_iter)
+                    loss, train_metric_dict, grad_norm = step(model, batch, opt, iteration, field, task, lr=lr, grad_clip=args.grad_clip, writer=writer, it=train_iter, rank=rank)
+                    if loss is None:
+                        logger.info('Encountered NAN loss during training... Continue training ignoring the current batch')
+                        continue
+                    if loss < 1e-5:
+                        zero_loss += 1
+                        if zero_loss >= 100:
+                            logger.info('Found loss less than 1e-5 for 100 steps, stopping.')
+                            return
+                    else:
+                        zero_loss = 0
 
                     # update curriculum fraction
                     if args.use_curriculum:
@@ -397,6 +418,16 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
             logger.info(f'training is done after {epoch} epochs')
             break
 
+def init_opt(args, model):
+    opt = None
+    if 'adam' in args.optimizer.lower():
+        if args.transformer_lr:
+            opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(0.9, 0.98), eps=1e-9, weight_decay=args.weight_decay)
+        else:
+            opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(args.beta0, 0.999), weight_decay=args.weight_decay)
+    else:
+        opt = torch.optim.SGD(model.params, lr=args.sgd_lr, weight_decay=args.weight_decay,)
+    return opt
 
 def run(args, run_args, rank=0, world_size=1):
     device = set_seed(args, rank=rank)
@@ -407,7 +438,7 @@ def run(args, run_args, rank=0, world_size=1):
 
     if hasattr(args, 'tensorboard') and args.tensorboard:
         logger.info(f'Initializing Writer')
-        writer = SummaryWriter(log_dir=args.log_dir)
+        writer = SummaryWriter(logdir=args.log_dir)
     else:
         writer = None
 
@@ -426,41 +457,12 @@ def run(args, run_args, rank=0, world_size=1):
             logger.info(f'Starting iteration is {start_iteration}')
             opt.load_state_dict(opt_state_dict)
 
-    logger.info(f'Begin Training')
+
     train(args, model, opt, train_sets, args.train_iterations, field, val_sets=val_sets, aux_sets=aux_sets,
         rank=rank, world_size=world_size, 
         log_every=args.log_every, val_every=args.val_every, rounds=len(train_sets)>1,
         writer=writer if rank==0 else None, save_every=args.save_every, start_iteration=start_iteration,
         best_decascore=save_dict.get('best_decascore') if save_dict is not None else None)
-
-
-def init_model(args, field, logger, world_size, device):
-    logger.info(f'Initializing {args.model}')
-    Model = getattr(models, args.model) 
-    model = Model(field, args)
-    params = get_trainable_params(model) 
-    num_param = count_params(params)
-    logger.info(f'{args.model} has {num_param:,} trainable parameters')
-
-    model.to(device)
-    if world_size > 1: 
-        logger.info(f'Wrapping model for distributed')
-        model = DistributedDataParallel(model)
-
-    model.params = params
-    return model
-
-
-def init_opt(args, model):
-    opt = None
-    if 'adam' in args.optimizer.lower():
-        if args.transformer_lr:
-            opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(0.9, 0.98), eps=1e-9, weight_decay=args.weight_decay)
-        else:
-            opt = torch.optim.Adam(model.params, lr=args.lr_rate, betas=(args.beta0, 0.999), weight_decay=args.weight_decay)
-    else:
-        opt = torch.optim.SGD(model.params, lr=args.sgd_lr, weight_decay=args.weight_decay,)
-    return opt
 
 
 def main(argv=sys.argv):

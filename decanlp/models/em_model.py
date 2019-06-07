@@ -86,16 +86,15 @@ class EM_model(nn.Module):
         batch_size = len(question_tokens)
 
         def make_one_hot(tensor, C):
-            one_hot = torch.zeros([*tensor.size(), C])
+            one_hot = torch.zeros([*tensor.size(), C], device=self.device)
             target = one_hot.scatter_(-1, tensor.unsqueeze(-1), 1)
 
             return target
 
         def sample_sentence(probs):
-
             B, T, C = probs.size()
             probs_flattened = probs.reshape([B*T, C])
-            sample = torch.tensor(([np.random.choice(C, p=row.detach().numpy()) for row in probs_flattened]))
+            sample = torch.tensor(([np.random.choice(C, p=row.detach().cpu().numpy()) for row in probs_flattened]), device=self.device)
             mask = make_one_hot(sample, C)
 
             probs = torch.sum(probs_flattened*mask, -1)
@@ -155,7 +154,6 @@ class EM_model(nn.Module):
         task = self.semantic_parser_model.args.train_tasks[0] if hasattr(self.semantic_parser_model.args, 'train_tasks') else self.semantic_parser_model.args.tasks[0]
         sample_output_from_SP_tokens = self.semantic_parser_field.reverse(sample_output_from_SP, detokenize=task.detokenize, field_name='answer')
 
-        print(f'**** greedy_output_from_thingtalk_MT_tokens: {sample_output_from_SP_tokens[0]} ***')
 
         # numericalize input to thingtalk machine translation
         #### TODO fix this later

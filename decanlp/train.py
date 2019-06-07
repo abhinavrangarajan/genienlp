@@ -175,11 +175,16 @@ def get_learning_rate(i, args):
         transformer_lr = transformer_lr * math.sqrt(args.dimension * args.warmup) * args.sgd_lr
     return transformer_lr
 
-def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, writer=None, it=None, rank=0):
+def step(model, batch, opts, iteration, field, task, lr=None, grad_clip=None, writer=None, it=None, rank=0):
     model.train()
-    opt.zero_grad()
-    loss, predictions = model(batch, iteration)
-    loss.backward()
+    for opt in opts:
+        opt.zero_grad()
+    loss_a, loss_b = model(batch, iteration)
+    if loss_b is not None and len(opts) > 1:
+        loss_a.backward(retain_graph=True)
+        loss_b.backward()
+    else:
+        loss_a.backward()
     trainable_params = get_trainable_params(model, name=True)
     logger = log(rank)
     Flag = False
@@ -192,12 +197,15 @@ def step(model, batch, opt, iteration, field, task, lr=None, grad_clip=None, wri
     if Flag:
         return None, {}, None
     if lr is not None:
-        opt.param_groups[0]['lr'] = lr
+        for opt in opts:
+            opt.param_groups[0]['lr'] = lr
     grad_norm = None
     if grad_clip > 0.0:
         grad_norm = torch.nn.utils.clip_grad_norm_(model.params, grad_clip)
-    opt.step()
+    for opt in opts:
+        opt.step()
 
+    loss = loss_a + loss_b if loss_b is not None else loss_a
     return loss.item(), {}, grad_norm
 
 
@@ -212,7 +220,7 @@ def update_fraction(args, task_iteration):
 
     return fraction
 
-def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_size=1,
+def train(args, model, opts, train_sets, train_iterations, field, saver, rank=0, world_size=1,
     log_every=10, val_every=100, save_every=1000, rounds=False, val_sets=[], aux_sets=[], writer=None, start_iteration=1, rnd=1, best_decascore=None):
     """main training function"""
 
@@ -233,7 +241,6 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
         task_done[task] = False
         task_fraction[task] = 0.0
 
-    saver = Saver(args.log_dir, world_size, args.max_to_keep)
     epoch = 0
 
     logger.info(f'Preparing iterators')
@@ -333,8 +340,15 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                                 
                             save_model_state_dict = {'model_state_dict': {k: v.cpu() for k, v in model.state_dict().items()}, 'field': field,
                                                'best_decascore': best_decascore}
-                            save_opt_state_dict = opt.state_dict()
-                            save_opt_state_dict.update({'start_iteration': iteration})
+
+                            if len(opts) == 1:
+                                opt = opts[0]
+                                save_opt_state_dict = [opt.state_dict()]
+                            else:
+                                save_opt_state_dict = [opt.state_dict() for opt in opts]
+
+
+                            save_opt_state_dict = [dict.update({'start_iteration': iteration}) for dict in save_opt_state_dict]
 
                             if world_size > 1:
                                 torch.distributed.barrier()
@@ -349,12 +363,13 @@ def train(args, model, opt, train_sets, train_iterations, field, rank=0, world_s
                                     torch.distributed.barrier()
 
                     # lr update
-                    lr = opt.param_groups[0]['lr'] 
+                    for opt in opts:
+                        lr = opt.param_groups[0]['lr']
                     if args.warmup > 0 and args.transformer_lr:
                         lr = get_learning_rate(iteration, args) 
 
                     # param update
-                    loss, train_metric_dict, grad_norm = step(model, batch, opt, iteration, field, task, lr=lr, grad_clip=args.grad_clip, writer=writer, it=train_iter, rank=rank)
+                    loss, train_metric_dict, grad_norm = step(model, batch, opts, iteration, field, task, lr=lr, grad_clip=args.grad_clip, writer=writer, it=train_iter, rank=rank)
                     if loss is None:
                         logger.info('Encountered NAN loss during training... Continue training ignoring the current batch')
                         continue
@@ -441,6 +456,8 @@ def run(args, run_args, rank=0, world_size=1):
 
     logger.start = time.time()
 
+    saver = Saver(args.log_dir, world_size, args.max_to_keep)
+
     if hasattr(args, 'tensorboard') and args.tensorboard:
         logger.info(f'Initializing Writer')
         writer = SummaryWriter(logdir=args.log_dir)
@@ -448,22 +465,37 @@ def run(args, run_args, rank=0, world_size=1):
         writer = None
 
     model = init_model(args, field, logger, world_size, device)
-    opt = init_opt(args, model) 
+    opts = []
+    if args.model == 'EM_model':
+        opts.append(init_opt(args, model.semantic_parser_model))
+        opts.append(init_opt(args, model.thingtalk_machine_translation_model))
+    else:
+        opts = [init_opt(args, model)]
     start_iteration = 1
 
+    ## TODO  enable loading multiple opt
     if save_dict is not None:
         logger.info(f'Loading model from {os.path.join(args.save, args.load)}')
         save_dict = torch.load(os.path.join(args.save, args.load))
         model.load_state_dict(save_dict['model_state_dict'])
         if args.resume:
-            logger.info(f'Resuming Training from {os.path.splitext(args.load)[0]}_optim.pth')
-            opt_state_dict = torch.load(os.path.join(args.save, f'{os.path.splitext(args.load)[0]}_optim.pth'))
-            start_iteration = opt_state_dict.pop('start_iteration')
-            logger.info(f'Starting iteration is {start_iteration}')
-            opt.load_state_dict(opt_state_dict)
+            if len(opts) == 1:
+                opt = opts[0]
+                logger.info(f'Resuming Training from {os.path.splitext(args.load)[0]}_optim.pth')
+                opt_state_dict = torch.load(os.path.join(args.save, f'{os.path.splitext(args.load)[0]}_optim.pth'))
+                start_iteration = opt_state_dict.pop('start_iteration')
+                logger.info(f'Starting iteration is {start_iteration}')
+                opt.load_state_dict(opt_state_dict)
+            else:
+                for i in range(len(opts)):
+                    opt = opts[i]
+                    logger.info(f'Resuming Training from {os.path.splitext(args.load)[0]}_optim_{i}.pth')
+                    opt_state_dict = torch.load(os.path.join(args.save, f'{os.path.splitext(args.load)[0]}_optim_{i}.pth'))
+                    start_iteration = opt_state_dict.pop('start_iteration')
+                    logger.info(f'Starting iteration is {start_iteration}')
+                    opt.load_state_dict(opt_state_dict)
 
-
-    train(args, model, opt, train_sets, args.train_iterations, field, val_sets=val_sets, aux_sets=aux_sets,
+    train(args, model, opts, train_sets, args.train_iterations, field, saver, val_sets=val_sets, aux_sets=aux_sets,
         rank=rank, world_size=world_size, 
         log_every=args.log_every, val_every=args.val_every, rounds=len(train_sets)>1,
         writer=writer if rank==0 else None, save_every=args.save_every, start_iteration=start_iteration,

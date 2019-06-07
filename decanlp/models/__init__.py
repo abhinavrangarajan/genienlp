@@ -32,3 +32,4 @@ from .multi_lingual_translation_model import MultiLingualTranslationModel
 from .coattentive_pointer_generator import CoattentivePointerGenerator
 from .self_attentive_pointer_generator import SelfAttentivePointerGenerator
 from .pointer_generator import PointerGenerator
+from .em_model import EM_model

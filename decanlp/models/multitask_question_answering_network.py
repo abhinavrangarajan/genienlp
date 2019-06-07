@@ -241,6 +241,8 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 context_indices, question_indices, 
                 oov_to_limited_idx)
 
+            out_probs = probs
+
 
             if self.args.use_bleu_loss and iteration >= self.args.loss_switch * max(self.args.train_iterations):
                 max_order = 4
@@ -253,6 +255,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                 bleu_loss_smoothed = expectedMultiBleu.bleu(probs, targets, translation_lengths, reference_lengths, max_order=max_order, smooth=True)
                 loss = -1 * bleu_loss_smoothed[0]
 
+
             elif self.args.use_maxmargin_loss:
                 targets = answer_indices[:, 1:].contiguous()
                 loss = max_margin_loss(probs, targets, pad_idx=pad_idx)
@@ -260,7 +263,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             else:
                 probs, targets = mask(answer_indices[:, 1:].contiguous(), probs.contiguous(), pad_idx=pad_idx)
                 loss = F.nll_loss(probs.log(), targets)
-            return loss, None
+            return loss, out_probs
 
         else:
             return None, self.greedy(self_attended_context, final_context, final_question, 

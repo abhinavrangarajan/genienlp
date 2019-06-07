@@ -150,6 +150,7 @@ def parse(argv):
     parser.add_argument('--question', type=str, help='provide a fixed question')
     parser.add_argument('--use_google_translate', action='store_true', help='use google translate instead of pre-trained machine translator')
     parser.add_argument('--source_lang', type=str, default='en', help='second language used in multi-lingual model')
+    parser.add_argument('--alpha', type=float, default=0.5, help='hyperparameter tuning the reward function in RL')
 
     args = parser.parse_args(argv[1:])
     if args.model is None:

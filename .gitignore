@@ -20,7 +20,7 @@ text/.DS_Store
 src/
 decaNLP_models/
 workdir/
-
+decaNLP-tests*
 
 # C extensions
 *.so

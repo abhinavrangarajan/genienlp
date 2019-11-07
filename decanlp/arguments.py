@@ -110,11 +110,15 @@ def parse(argv):
     parser.add_argument('--no_glove_decoder', action='store_false', dest='glove_decoder', help='turn off GloVe embeddings from decoder')
     parser.add_argument('--pretrained_decoder_lm', help='pretrained language model to use as embedding layer for the decoder (omit to disable)')
 
+    parser.add_argument('--use_fasttext', action='store_true', help='')
+    parser.add_argument('--train_fasttext', action='store_true', help='')
+    parser.add_argument('--fasttext_dataset', action='store_true', help='')
+
     parser.add_argument('--warmup', default=800, type=int, help='warmup for learning rate')
     parser.add_argument('--grad_clip', default=1.0, type=float, help='gradient clipping')
     parser.add_argument('--beta0', default=0.9, type=float, help='alternative momentum for Adam (only when not using transformer_lr)')
     parser.add_argument('--optimizer', default='adam', type=str, help='Adam or SGD')
-    parser.add_argument('--no_transformer_lr', action='store_false', dest='transformer_lr', help='turns off the transformer learning rate strategy') 
+    parser.add_argument('--no_transformer_lr', action='store_false', dest='transformer_lr', help='turns off the transformer learning rate strategy')
     parser.add_argument('--sgd_lr', default=1.0, type=float, help='learning rate for SGD (if not using Adam)')
     parser.add_argument('--weight_decay', default=0.0, type=float, help='weight L2 regularization')
 
@@ -125,10 +129,10 @@ def parse(argv):
     parser.add_argument('--devices', default=[0], nargs='+', type=int, help='a list of devices that can be used for training (multi-gpu currently WIP)')
     parser.add_argument('--backend', default='gloo', type=str, help='backend for distributed training')
 
-    parser.add_argument('--no_commit', action='store_false', dest='commit', help='do not track the git commit associated with this training run') 
-    parser.add_argument('--exist_ok', action='store_true', help='Ok if the save directory already exists, i.e. overwrite is ok') 
-    parser.add_argument('--token_testing', action='store_true', help='if true, sorts all iterators') 
-    parser.add_argument('--reverse', action='store_true', help='if token_testing and true, sorts all iterators in reverse') 
+    parser.add_argument('--no_commit', action='store_false', dest='commit', help='do not track the git commit associated with this training run')
+    parser.add_argument('--exist_ok', action='store_true', help='Ok if the save directory already exists, i.e. overwrite is ok')
+    parser.add_argument('--token_testing', action='store_true', help='if true, sorts all iterators')
+    parser.add_argument('--reverse', action='store_true', help='if token_testing and true, sorts all iterators in reverse')
 
     parser.add_argument('--skip_cache', action='store_true', dest='skip_cache_bool', help='whether to use exisiting cached splits or generate new ones')
     parser.add_argument('--lr_rate', default=0.001, type=float, help='initial_learning_rate')
@@ -180,7 +184,7 @@ def parse(argv):
             args.train_batch_tokens = len(args.train_task_names) * args.train_batch_tokens
     if len(args.val_batch_size) < len(args.val_task_names):
         args.val_batch_size = len(args.val_task_names) * args.val_batch_size
-        
+
     # postprocess arguments
     if args.commit:
         args.commit = get_commit()
@@ -189,7 +193,7 @@ def parse(argv):
 
     args.log_dir = args.save
     args.dist_sync_file = os.path.join(args.log_dir, 'distributed_sync_file')
-    
+
     for x in ['data', 'save', 'embeddings', 'log_dir', 'dist_sync_file']:
         setattr(args, x, os.path.join(args.root, getattr(args, x)))
     save_args(args)

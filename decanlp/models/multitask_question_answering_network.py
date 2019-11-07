@@ -86,6 +86,21 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if self.args.glove_and_char:
                 self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
 
+        if self.args.use_fasttext:
+            import fasttext
+            language = args.locale.split('-')[0]
+            if args.train_fasttext:
+                if not os.path.exists(args.fasttext_dataset):
+                    sys.exit('Please specify a valid path for fastText training dataset')
+                self.model_fasttext = fasttext.train_unsupervised(args.fasttext_dataset, model='skipgram')
+                self.model_fasttext.save_model(os.path.join(args.save, "model_fasttext_{}.bin".format(language)))
+            else:
+                self.model_fasttext = fasttext.load_model(os.path.join(args.save, "model_fasttext_{}.bin".format(language)))
+            fasstext_dim = 300
+            self.project_fasttext = Feedforward(300, args.dimension, dropout=0.0)
+            if self.args.glove_and_char:
+                self.project_embeddings = Feedforward(2 * args.dimension, args.dimension, dropout=0.0)
+
         if args.pretrained_decoder_lm:
             pretrained_save_dict = torch.load(os.path.join(args.embeddings, args.pretrained_decoder_lm), map_location=str(self.device))
 
@@ -118,26 +133,26 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                                 include_pretrained=args.glove_decoder,
                                                 trained_dimension=args.trainable_decoder_embedding,
                                                 dropout=args.dropout_ratio, project=True)
-    
+
         self.bilstm_before_coattention = PackedLSTM(args.dimension,  args.dimension,
             batch_first=True, bidirectional=True, num_layers=1, dropout=0)
         self.coattention = CoattentiveLayer(args.dimension, dropout=0.3)
         dim = 2*args.dimension + args.dimension + args.dimension
 
         self.context_bilstm_after_coattention = PackedLSTM(dim, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
         self.self_attentive_encoder_context = TransformerEncoder(args.dimension, args.transformer_heads, args.transformer_hidden, args.transformer_layers, args.dropout_ratio)
         self.bilstm_context = PackedLSTM(args.dimension, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
 
         self.question_bilstm_after_coattention = PackedLSTM(dim, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
         self.self_attentive_encoder_question = TransformerEncoder(args.dimension, args.transformer_heads, args.transformer_hidden, args.transformer_layers, args.dropout_ratio)
         self.bilstm_question = PackedLSTM(args.dimension, args.dimension,
-            batch_first=True, dropout=dp(args), bidirectional=True, 
+            batch_first=True, dropout=dp(args), bidirectional=True,
             num_layers=args.rnn_layers)
 
         self.self_attentive_decoder = TransformerDecoder(args.dimension, args.transformer_heads, args.transformer_hidden, args.transformer_layers, args.dropout_ratio)
@@ -164,6 +179,16 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return limited_idx_to_full_idx[x]
         self.map_to_full = map_to_full
 
+        if self.args.use_fasttext:
+            context_final_list = []
+            for seq in context_tokens:
+                context_final_list.append(torch.tensor([self.model_fasttext[token] for token in seq]).to(context.device))
+            context_fasttext = self.project_fasttext(torch.stack(context_final_list, dim=0).detach())
+            question_final_list = []
+            for seq in question_tokens:
+                question_final_list.append(torch.tensor([self.model_fasttext[token] for token in seq]).to(context.device))
+            question_fasttext = self.project_fasttext(torch.stack(question_final_list, dim=0).detach())
+
         if -1 not in self.args.elmo:
             from allennlp.modules.elmo import batch_to_ids
 
@@ -182,8 +207,11 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if -1 not in self.args.elmo:
                 context_embedded = self.project_embeddings(torch.cat([context_embedded, context_elmo], -1))
                 question_embedded = self.project_embeddings(torch.cat([question_embedded, question_elmo], -1))
+            if self.args.use_fasttext:
+                context_embedded = self.project_embeddings(torch.cat([context_embedded, context_fasttext], -1))
+                question_embedded = self.project_embeddings(torch.cat([question_embedded, question_fasttext], -1))
         else:
-            context_embedded, question_embedded = context_elmo, question_elmo 
+            context_embedded, question_embedded = context_elmo, question_elmo
 
         context_encoded = self.bilstm_before_coattention(context_embedded, context_lengths)[0]
         question_encoded = self.bilstm_before_coattention(question_embedded, question_lengths)[0]
@@ -234,13 +262,13 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             else:
                 answer_embedded = self.decoder_embeddings(answer)
             self_attended_decoded = self.self_attentive_decoder(answer_embedded[:, :-1].contiguous(), self_attended_context, context_padding=context_padding, answer_padding=answer_padding, positional_encodings=True)
-            decoder_outputs = self.dual_ptr_rnn_decoder(self_attended_decoded, 
+            decoder_outputs = self.dual_ptr_rnn_decoder(self_attended_decoded,
                 final_context, final_question, hidden=context_rnn_state)
             rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
 
-            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, 
-                context_attention, question_attention, 
-                context_indices, question_indices, 
+            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                context_attention, question_attention,
+                context_indices, question_indices,
                 oov_to_limited_idx)
 
 
@@ -265,18 +293,18 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             return loss, None
 
         else:
-            return None, self.greedy(self_attended_context, final_context, final_question, 
+            return None, self.greedy(self_attended_context, final_context, final_question,
                 context_indices, question_indices,
                 oov_to_limited_idx, rnn_state=context_rnn_state).data
- 
+
     def reshape_rnn_state(self, h):
         return h.view(h.size(0) // 2, 2, h.size(1), h.size(2)) \
                 .transpose(1, 2).contiguous() \
                 .view(h.size(0) // 2, h.size(1), h.size(2) * 2).contiguous()
 
-    def probs(self, generator, outputs, vocab_pointer_switches, context_question_switches, 
-        context_attention, question_attention, 
-        context_indices, question_indices, 
+    def probs(self, generator, outputs, vocab_pointer_switches, context_question_switches,
+        context_attention, question_attention,
+        context_indices, question_indices,
         oov_to_limited_idx):
 
         size = list(outputs.size())
@@ -293,11 +321,11 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             scaled_p_vocab = torch.cat([scaled_p_vocab, buff], dim=buff.dim()-1)
 
         # p_context_ptr
-        scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, context_indices.unsqueeze(1).expand_as(context_attention), 
+        scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, context_indices.unsqueeze(1).expand_as(context_attention),
             (context_question_switches * (1 - vocab_pointer_switches)).expand_as(context_attention) * context_attention)
 
         # p_question_ptr
-        scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, question_indices.unsqueeze(1).expand_as(question_attention), 
+        scaled_p_vocab.scatter_add_(scaled_p_vocab.dim()-1, question_indices.unsqueeze(1).expand_as(question_attention),
             ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(question_attention) * question_attention)
 
         return scaled_p_vocab
@@ -320,7 +348,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
             if t == 0:
                 if self.args.pretrained_decoder_lm:
                     init_token = self_attended_context[-1].new_full((1, B), self.pretrained_decoder_vocab_stoi['<init>'], dtype=torch.long)
-                    
+
                     # note that pretrained_decoder_embeddings is time first
                     embedding, pretrained_lm_hidden = self.pretrained_decoder_embeddings.encode(init_token, pretrained_lm_hidden)
                     embedding.transpose_(0, 1)
@@ -337,7 +365,7 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                                                     dtype=torch.long, device=self.device, requires_grad=False)
                     embedding, pretrained_lm_hidden = self.pretrained_decoder_embeddings.encode(current_token_id,
                                                                                                 pretrained_lm_hidden)
-                                                                                                
+
                     # note that pretrained_decoder_embeddings is time first
                     embedding.transpose_(0, 1)
 
@@ -354,13 +382,13 @@ class MultitaskQuestionAnsweringNetwork(nn.Module):
                     self.self_attentive_decoder.layers[l].selfattn(hiddens[l][:, t], hiddens[l][:, :t + 1], hiddens[l][:, :t + 1])
                   , self_attended_context[l], self_attended_context[l]))
             decoder_outputs = self.dual_ptr_rnn_decoder(hiddens[-1][:, t].unsqueeze(1),
-                context, question, 
+                context, question,
                 context_alignment=context_alignment, question_alignment=question_alignment,
                 hidden=rnn_state, output=rnn_output)
             rnn_output, context_attention, question_attention, context_alignment, question_alignment, vocab_pointer_switch, context_question_switch, rnn_state = decoder_outputs
-            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch, 
-                context_attention, question_attention, 
-                context_indices, question_indices, 
+            probs = self.probs(self.out, rnn_output, vocab_pointer_switch, context_question_switch,
+                context_attention, question_attention,
+                context_indices, question_indices,
                 oov_to_limited_idx)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)

@@ -34,7 +34,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .common import CombinedEmbedding, TransformerDecoder, LSTMDecoderAttention, Feedforward, \
-    mask, make_confidence, positional_encodings_like, EPSILON, MultiLSTMCell
+    mask, make_confidence, positional_encodings_like, EPSILON, MultiLSTMCell, process_confidence_scores
 
 
 class MQANDecoder(nn.Module):
@@ -89,6 +89,8 @@ class MQANDecoder(nn.Module):
 
         self.map_to_full = decoder_vocab.decode
 
+        answer_indices = answer_limited if answer_limited is not None else answer
+
         context_padding = context.data == self.pad_idx
         question_padding = question.data == self.pad_idx
 
@@ -134,8 +136,14 @@ class MQANDecoder(nn.Module):
                                context_limited, question_limited,
                                decoder_vocab)
             
+            confidence = process_confidence_scores(self, confidence, answer_indices)
+
             probs, targets = mask(answer_limited[:, 1:].contiguous(), probs.contiguous(), pad_idx=decoder_vocab.pad_idx)
             
+            # Make sure we don't have any numerical instability
+            probs = torch.clamp(probs, 0. + EPSILON, 1. - EPSILON)
+            confidence = torch.clamp(confidence, 0. + EPSILON, 1. - EPSILON)
+
             if not self.args.baseline:
                 # Randomly set half of the confidences to 1 (i.e. no hints)
                 b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)) # .to(self.device)

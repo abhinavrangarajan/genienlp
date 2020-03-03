@@ -73,6 +73,9 @@ class MQANDecoder(nn.Module):
         self.generative_vocab_size = numericalizer.generative_vocab_size
         self.out = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, self.generative_vocab_size)
 
+        #self.confidence = nn.Linear(self.generative_vocab_size, 1)
+        self.confidence = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, 1)
+
     def set_embeddings(self, embeddings):
         if self.decoder_embeddings is not None:
             self.decoder_embeddings.set_embeddings(embeddings)
@@ -150,6 +153,7 @@ class MQANDecoder(nn.Module):
         size[-1] = self.generative_vocab_size
         scores = self.out(outputs.view(-1, outputs.size(-1))).view(size)
         p_vocab = F.softmax(scores, dim=scores.dim() - 1)
+        
         scaled_p_vocab = vocab_pointer_switches.expand_as(p_vocab) * p_vocab
 
         effective_vocab_size = len(decoder_vocab)
@@ -169,7 +173,7 @@ class MQANDecoder(nn.Module):
                                     ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(
                                         question_attention) * question_attention)
 
-        return scaled_p_vocab
+        return scaled_p_vocab, confidence
 
     def greedy(self, self_attended_context, context, context_padding, question, context_indices, question_indices,
                decoder_vocab, rnn_state=None):

@@ -7,6 +7,9 @@ import numpy as np
 import gzip
 import shutil
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 import six
 from six.moves.urllib.request import urlretrieve
 import torch

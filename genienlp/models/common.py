@@ -279,6 +279,18 @@ def mask(targets, out, squash=True, pad_idx=1):
     targets_after = targets[mask]
     return out_after, targets_after
 
+def make_confidence(targets, out, confidence, pad_idx=1):
+    confidence = confidence.squeeze(-1)
+    mask = (targets != pad_idx)
+    lengths = torch.sum(mask, -1)
+    res = []
+    for i, val in enumerate(lengths):
+        res += val.item()*[confidence[i].item()]
+    res_tensor = torch.Tensor(res).unsqueeze(-1)
+    if targets.is_cuda:
+        res_tensor = res_tensor.cuda(targets.get_device())
+    return res_tensor
+
 
 class Highway(torch.nn.Module):
     def __init__(self, d_in, activation='relu', n_layers=1):

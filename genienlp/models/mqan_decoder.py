@@ -34,7 +34,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .common import CombinedEmbedding, TransformerDecoder, LSTMDecoderAttention, Feedforward, \
-    mask, positional_encodings_like, EPSILON, MultiLSTMCell
+    mask, make_confidence, positional_encodings_like, EPSILON, MultiLSTMCell
 
 
 class MQANDecoder(nn.Module):
@@ -73,8 +73,8 @@ class MQANDecoder(nn.Module):
         self.generative_vocab_size = numericalizer.generative_vocab_size
         self.out = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, self.generative_vocab_size)
 
-        #self.confidence = nn.Linear(self.generative_vocab_size, 1)
-        self.confidence = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, 1)
+        self.confidence = nn.Linear(self.generative_vocab_size, 1)
+        #self.confidence = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, 1)
 
     def set_embeddings(self, embeddings):
         if self.decoder_embeddings is not None:
@@ -129,19 +129,53 @@ class MQANDecoder(nn.Module):
             vocab_pointer_switch = self.vocab_pointer_switch(vocab_pointer_switch_input)
             context_question_switch = self.context_question_switch(context_question_switch_input)
 
-            probs = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
+            probs, confidence = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_limited, question_limited,
                                decoder_vocab)
-
+            
             probs, targets = mask(answer_limited[:, 1:].contiguous(), probs.contiguous(), pad_idx=decoder_vocab.pad_idx)
-            loss = F.nll_loss(probs.log(), targets)
-            return loss, None
+            
+            if not self.args.baseline:
+                # Randomly set half of the confidences to 1 (i.e. no hints)
+                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)) # .to(self.device)
+                conf = confidence * b + (1 - b)
+                labels_onehot = self.encode_onehot(targets, probs.size(-1))
+
+                maked_confidence = make_confidence(answer_indices[:, 1:].contiguous(), probs.contiguous(), conf.contiguous())
+
+                pred_new = probs * maked_confidence.expand_as(probs) + labels_onehot * (1 - maked_confidence.expand_as(labels_onehot))
+                pred_new = torch.log(pred_new)
+            else:
+                pred_new = torch.log(probs)
+            
+            xentropy_loss = F.nll_loss(pred_new, targets)
+            confidence_loss = torch.mean(-torch.log(confidence))
+
+            if self.args.baseline:
+                total_loss = xentropy_loss
+            else:
+                total_loss = xentropy_loss + (self.args.lambd * confidence_loss)
+
+            return total_loss, None, None
+
 
         else:
-            return None, self.greedy(self_attended_context, final_context, context_padding, final_question,
+            predictions, confidence = self.greedy(self_attended_context, final_context, context_padding, final_question,
                                      context_limited, question_limited,
-                                     decoder_vocab, rnn_state=context_rnn_state).data
+                                     decoder_vocab, rnn_state=context_rnn_state)
+            return None, predictions.data, confidence
+
+
+    def encode_onehot(self, labels, n_classes):
+        onehot = torch.FloatTensor(labels.size()[0], n_classes)
+        labels = labels.data
+        if labels.is_cuda:
+            onehot = onehot.cuda()
+        onehot.zero_()
+        onehot.scatter_(1, labels.view(-1, 1), 1)
+        return onehot
+        
 
     def probs(self, outputs, vocab_pointer_switches, context_question_switches,
               context_attention, question_attention,
@@ -152,6 +186,11 @@ class MQANDecoder(nn.Module):
 
         size[-1] = self.generative_vocab_size
         scores = self.out(outputs.view(-1, outputs.size(-1))).view(size)
+        
+        size2 = list(scores.size())
+        size2[-1] = 1
+        confidence = self.confidence(scores.view(-1, scores.size(-1))).view(size2)
+
         p_vocab = F.softmax(scores, dim=scores.dim() - 1)
         
         scaled_p_vocab = vocab_pointer_switches.expand_as(p_vocab) * p_vocab
@@ -226,7 +265,7 @@ class MQANDecoder(nn.Module):
             vocab_pointer_switch = self.vocab_pointer_switch(vocab_pointer_switch_input)
             context_question_switch = self.context_question_switch(context_question_switch_input)
 
-            probs = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
+            probs, confidence = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_indices, question_indices, decoder_vocab)
             pred_probs, preds = probs.max(-1)
@@ -235,7 +274,7 @@ class MQANDecoder(nn.Module):
             outs[:, t] = preds.cpu().apply_(self.map_to_full)
             if eos_yet.all():
                 break
-        return outs
+        return outs, None
 
 
 class LSTMDecoder(nn.Module):

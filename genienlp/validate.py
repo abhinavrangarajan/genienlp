@@ -38,7 +38,7 @@ from .util import pad
 def compute_validation_outputs(model, val_iter, numericalizer, iteration):
     loss, predictions, answers, contexts, questions = [], [], [], [], []
     for batch_idx, batch in enumerate(val_iter):
-        l, p = model(batch, iteration)
+        l, p, confidence = model(batch, iteration)
         loss.append(l)
         predictions.append(pad(p, 150, dim=-1, val=numericalizer.pad_id))
         a = pad(batch.answer.value.data.cpu(), 150, dim=-1, val=numericalizer.pad_id)

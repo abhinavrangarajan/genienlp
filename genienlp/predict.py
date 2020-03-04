@@ -116,8 +116,8 @@ def run(args, numericalizer, val_sets, model, device):
             with open(prediction_file_name, 'w' + ('' if args.overwrite else 'x')) as prediction_file:
                 for batch_idx, batch in enumerate(it):
                     _, batch_prediction, confidence = model(batch, iteration=1)
-                    print("batch_prediction.shape: ", batch_prediction.shape)
-                    print("confidence.shape: ", confidence.shape)
+                    # print("batch_prediction.shape: ", batch_prediction.shape)
+                    # print("confidence.shape: ", confidence.shape)
 
                     batch_prediction = numericalizer.reverse(batch_prediction, detokenize=task.detokenize,
                                                              field_name='answer')

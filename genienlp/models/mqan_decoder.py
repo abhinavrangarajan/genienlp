@@ -288,7 +288,7 @@ class MQANDecoder(nn.Module):
             if eos_yet.all():
                 break
             # print(outs.shape)
-        outs_dummy_modified_tensor = torch.cat([torch.zeros(batch_size, 1, dtype=torch.long), outs], dim=1)
+        outs_dummy_modified_tensor = torch.cat([torch.zeros(batch_size, 1, dtype=torch.long,device = torch.device(self.args.devices[0])), outs], dim=1)
         return outs, process_confidence_scores(self, conf_outs.unsqueeze(-1), outs_dummy_modified_tensor)
 
 

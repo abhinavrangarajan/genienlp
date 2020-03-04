@@ -228,6 +228,7 @@ class MQANDecoder(nn.Module):
         max_decoder_time = self.args.max_output_length
         outs = context.new_full((batch_size, max_decoder_time), self.pad_idx, dtype=torch.long)
 
+
         if self.args.transformer_layers > 0:
             hiddens = [self_attended_context[0].new_zeros((batch_size, max_decoder_time, self.args.dimension))
                        for l in range(len(self.self_attentive_decoder.layers) + 1)]
@@ -276,12 +277,16 @@ class MQANDecoder(nn.Module):
             probs, confidence = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_indices, question_indices, decoder_vocab)
+            print("Inside Greedy; confidence.shape: ", confidence.shape, probs.shape)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)
+            print(preds.shape)
             eos_yet = eos_yet | (preds == decoder_vocab.eos_idx).byte()
             outs[:, t] = preds.cpu().apply_(self.map_to_full)
+            print(outs[:,t].shape)
             if eos_yet.all():
                 break
+            print(outs.shape)
         return outs, None
 
 

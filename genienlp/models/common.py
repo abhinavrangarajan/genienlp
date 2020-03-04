@@ -293,7 +293,7 @@ def make_confidence(targets, out, confidence, pad_idx=1):
 
 def process_confidence_scores(model, confidence, answer_indices):
     conf_mode = model.args.confidence_mode
-    pad_idx = model.field.decoder_stoi[model.field.pad_token]
+    pad_idx = model.pad_idx  # model.field.decoder_stoi[model.field.pad_token]
 
     if conf_mode == 'rnn':
         confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)

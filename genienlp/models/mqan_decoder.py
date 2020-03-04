@@ -227,7 +227,7 @@ class MQANDecoder(nn.Module):
         batch_size = context.size()[0]
         max_decoder_time = self.args.max_output_length
         outs = context.new_full((batch_size, max_decoder_time), self.pad_idx, dtype=torch.long)
-
+        conf_outs = context.new_full((batch_size, max_decoder_time), self.pad_idx, dtype=torch.long)
 
         if self.args.transformer_layers > 0:
             hiddens = [self_attended_context[0].new_zeros((batch_size, max_decoder_time, self.args.dimension))
@@ -277,17 +277,19 @@ class MQANDecoder(nn.Module):
             probs, confidence = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_indices, question_indices, decoder_vocab)
-            print("Inside Greedy; confidence.shape: ", confidence.shape, probs.shape)
+            # print("Inside Greedy; confidence.shape: ", confidence.shape, probs.shape)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)
-            print(preds.shape)
+            # print(preds.shape)
             eos_yet = eos_yet | (preds == decoder_vocab.eos_idx).byte()
             outs[:, t] = preds.cpu().apply_(self.map_to_full)
-            print(outs[:,t].shape)
+            conf_outs[:, t] = confidence.squeeze()
+            # print(outs[:,t].shape)
             if eos_yet.all():
                 break
-            print(outs.shape)
-        return outs, None
+            # print(outs.shape)
+        outs_dummy_modified_tensor = torch.cat([torch.zeros(batch_size, 1, dtype=torch.long), outs], dim=1)
+        return outs, process_confidence_scores(self, conf_outs.unsqueeze(-1), outs_dummy_modified_tensor)
 
 
 class LSTMDecoder(nn.Module):

@@ -117,6 +117,7 @@ def run(args, numericalizer, val_sets, model, device):
                 for batch_idx, batch in enumerate(it):
                     _, batch_prediction, confidence = model(batch, iteration=1)
                     print("batch_prediction.shape: ", batch_prediction.shape)
+                    print("confidence.shape: ", confidence.shape)
 
                     batch_prediction = numericalizer.reverse(batch_prediction, detokenize=task.detokenize,
                                                              field_name='answer')
@@ -126,7 +127,7 @@ def run(args, numericalizer, val_sets, model, device):
                     answers += batch_answer
 
                     for i, example_prediction in enumerate(batch_prediction):
-                        prediction_file.write(batch.example_id[i] + '\t' + str(confidence) + '\t' + example_prediction + '\n')
+                        prediction_file.write(batch.example_id[i] + '\t' + str(confidence[i]) + '\t' + example_prediction + '\n')
 
             if len(answers) > 0:
                 metrics, answers = compute_metrics(predictions, answers, task.metrics, args=args)
@@ -175,6 +176,8 @@ def parse_argv(parser):
                         help='directory where cached models should be loaded from')
     parser.add_argument('--subsample', default=20000000, type=int,
                         help='subsample the eval/test datasets (experimental)')
+
+    parser.add_argument('--confidence_mode', type=str, default='mean', help="how to calculate confidence score for each sentence from its token's scores")
 
 
 def main(args):

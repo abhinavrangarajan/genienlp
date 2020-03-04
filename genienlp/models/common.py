@@ -321,14 +321,18 @@ def process_confidence_scores(model, confidence, answer_indices):
 
 
     elif conf_mode == 'mean':
+        # print("confidence (before): ", confidence.shape)
         confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        # print("confidence (after): ", confidence.shape)
         mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
         lengths = torch.sum(mask_ans, -1)
         confidence = torch.sigmoid(confidence)
+        confidence = confidence * mask_ans.unsqueeze(-1)
+        # print(torch.mean(confidence,-1))
         confidence = confidence.squeeze(-1)
         # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
         confidence = torch.sum(confidence, -1) / lengths.float()
-
+        # print("confidence (after after): ", confidence)
     return confidence
 
 

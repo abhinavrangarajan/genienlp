@@ -284,8 +284,14 @@ def make_confidence(targets, out, confidence, pad_idx=1):
     mask = (targets != pad_idx)
     lengths = torch.sum(mask, -1)
     res = []
+    exc=0
     for i, val in enumerate(lengths):
-        res += val.item()*[confidence[i].item()]
+        try:
+                res += val.item()*[confidence[i].item()]
+        except:
+                res += val.item()*[confidence.item()]
+                exc+=1
+    print(exc)
     res_tensor = torch.Tensor(res).unsqueeze(-1)
     if targets.is_cuda:
         res_tensor = res_tensor.cuda(targets.get_device())

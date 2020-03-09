@@ -146,7 +146,7 @@ class MQANDecoder(nn.Module):
 
             if not self.args.baseline:
                 # Randomly set half of the confidences to 1 (i.e. no hints)
-                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)) # .to(self.device)
+                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)).to(torch.device(self.args.devices[0]))
                 conf = confidence * b + (1 - b)
                 labels_onehot = self.encode_onehot(targets, probs.size(-1))
 

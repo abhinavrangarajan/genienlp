@@ -162,6 +162,11 @@ def parse_argv(parser):
     parser.add_argument('--curriculum_strategy', default='linear', type=str, choices=['linear', 'exp'],
                         help='growth strategy for curriculum')
 
+    parser.add_argument('--lambd', default=0.0, type=float, help='weight for confidence loss')
+    parser.add_argument('--baseline',action='store_true',default=False, help='to include confidence branch or not.')
+
+    parser.add_argument('--confidence_mode', type=str, default='mean', help="how to calculate confidence score for each sentence from its token's scores")
+
 
 def post_parse(args):
     if args.val_task_names is None:

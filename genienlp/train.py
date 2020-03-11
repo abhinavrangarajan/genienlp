@@ -147,7 +147,7 @@ def prepare_data(args, logger):
 def step(model, batch, iteration, opt, lr_scheduler=None, grad_clip=None, logger=None):
     model.train()
     opt.zero_grad()
-    loss, predictions = model(batch, iteration)
+    loss, predictions, confidence = model(batch, iteration)
     if torch.isnan(loss).any():
         raise RuntimeError('Got NaN loss')
     loss.backward()

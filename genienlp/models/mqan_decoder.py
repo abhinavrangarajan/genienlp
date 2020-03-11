@@ -34,7 +34,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .common import CombinedEmbedding, TransformerDecoder, LSTMDecoderAttention, Feedforward, \
-    mask, positional_encodings_like, EPSILON, MultiLSTMCell
+    mask, make_confidence, positional_encodings_like, EPSILON, MultiLSTMCell, process_confidence_scores
 
 
 class MQANDecoder(nn.Module):
@@ -73,6 +73,9 @@ class MQANDecoder(nn.Module):
         self.generative_vocab_size = numericalizer.generative_vocab_size
         self.out = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, self.generative_vocab_size)
 
+        self.confidence = nn.Linear(self.generative_vocab_size, 1)
+        #self.confidence = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, 1)
+
     def set_embeddings(self, embeddings):
         if self.decoder_embeddings is not None:
             self.decoder_embeddings.set_embeddings(embeddings)
@@ -85,6 +88,8 @@ class MQANDecoder(nn.Module):
         decoder_vocab = batch.decoder_vocab
 
         self.map_to_full = decoder_vocab.decode
+
+        answer_indices = answer_limited if answer_limited is not None else answer
 
         context_padding = context.data == self.pad_idx
         question_padding = question.data == self.pad_idx
@@ -126,19 +131,59 @@ class MQANDecoder(nn.Module):
             vocab_pointer_switch = self.vocab_pointer_switch(vocab_pointer_switch_input)
             context_question_switch = self.context_question_switch(context_question_switch_input)
 
-            probs = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
+            probs, confidence = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_limited, question_limited,
                                decoder_vocab)
+            
+            confidence = process_confidence_scores(self, confidence, answer_indices)
 
             probs, targets = mask(answer_limited[:, 1:].contiguous(), probs.contiguous(), pad_idx=decoder_vocab.pad_idx)
-            loss = F.nll_loss(probs.log(), targets)
-            return loss, None
+            
+            # Make sure we don't have any numerical instability
+            probs = torch.clamp(probs, 0. + EPSILON, 1. - EPSILON)
+            confidence = torch.clamp(confidence, 0. + EPSILON, 1. - EPSILON)
+
+            if not self.args.baseline:
+                # Randomly set half of the confidences to 1 (i.e. no hints)
+                b = torch.bernoulli(torch.Tensor(confidence.size()).uniform_(0, 1)).to(torch.device(self.args.devices[0]))
+                conf = confidence * b + (1 - b)
+                labels_onehot = self.encode_onehot(targets, probs.size(-1))
+
+                maked_confidence = make_confidence(answer_indices[:, 1:].contiguous(), probs.contiguous(), conf.contiguous())
+
+                pred_new = probs * maked_confidence.expand_as(probs) + labels_onehot * (1 - maked_confidence.expand_as(labels_onehot))
+                pred_new = torch.log(pred_new)
+            else:
+                pred_new = torch.log(probs)
+            
+            xentropy_loss = F.nll_loss(pred_new, targets)
+            confidence_loss = torch.mean(-torch.log(confidence))
+
+            if self.args.baseline:
+                total_loss = xentropy_loss
+            else:
+                total_loss = xentropy_loss + (self.args.lambd * confidence_loss)
+
+            return total_loss, None, None
+
 
         else:
-            return None, self.greedy(self_attended_context, final_context, context_padding, final_question,
+            predictions, confidence = self.greedy(self_attended_context, final_context, context_padding, final_question,
                                      context_limited, question_limited,
-                                     decoder_vocab, rnn_state=context_rnn_state).data
+                                     decoder_vocab, rnn_state=context_rnn_state)
+            return None, predictions.data, confidence
+
+
+    def encode_onehot(self, labels, n_classes):
+        onehot = torch.FloatTensor(labels.size()[0], n_classes)
+        labels = labels.data
+        if labels.is_cuda:
+            onehot = onehot.cuda()
+        onehot.zero_()
+        onehot.scatter_(1, labels.view(-1, 1), 1)
+        return onehot
+        
 
     def probs(self, outputs, vocab_pointer_switches, context_question_switches,
               context_attention, question_attention,
@@ -149,7 +194,13 @@ class MQANDecoder(nn.Module):
 
         size[-1] = self.generative_vocab_size
         scores = self.out(outputs.view(-1, outputs.size(-1))).view(size)
+        
+        size2 = list(scores.size())
+        size2[-1] = 1
+        confidence = self.confidence(scores.view(-1, scores.size(-1))).view(size2)
+
         p_vocab = F.softmax(scores, dim=scores.dim() - 1)
+        
         scaled_p_vocab = vocab_pointer_switches.expand_as(p_vocab) * p_vocab
 
         effective_vocab_size = len(decoder_vocab)
@@ -169,13 +220,14 @@ class MQANDecoder(nn.Module):
                                     ((1 - context_question_switches) * (1 - vocab_pointer_switches)).expand_as(
                                         question_attention) * question_attention)
 
-        return scaled_p_vocab
+        return scaled_p_vocab, confidence
 
     def greedy(self, self_attended_context, context, context_padding, question, context_indices, question_indices,
                decoder_vocab, rnn_state=None):
         batch_size = context.size()[0]
         max_decoder_time = self.args.max_output_length
         outs = context.new_full((batch_size, max_decoder_time), self.pad_idx, dtype=torch.long)
+        conf_outs = context.new_full((batch_size, max_decoder_time), self.pad_idx, dtype=torch.long)
 
         if self.args.transformer_layers > 0:
             hiddens = [self_attended_context[0].new_zeros((batch_size, max_decoder_time, self.args.dimension))
@@ -222,16 +274,22 @@ class MQANDecoder(nn.Module):
             vocab_pointer_switch = self.vocab_pointer_switch(vocab_pointer_switch_input)
             context_question_switch = self.context_question_switch(context_question_switch_input)
 
-            probs = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
+            probs, confidence = self.probs(decoder_output, vocab_pointer_switch, context_question_switch,
                                context_attention, question_attention,
                                context_indices, question_indices, decoder_vocab)
+            # print("Inside Greedy; confidence.shape: ", confidence.shape, probs.shape)
             pred_probs, preds = probs.max(-1)
             preds = preds.squeeze(1)
+            # print(preds.shape)
             eos_yet = eos_yet | (preds == decoder_vocab.eos_idx).byte()
             outs[:, t] = preds.cpu().apply_(self.map_to_full)
+            conf_outs[:, t] = confidence.squeeze()
+            # print(outs[:,t].shape)
             if eos_yet.all():
                 break
-        return outs
+            # print(outs.shape)
+        outs_dummy_modified_tensor = torch.cat([torch.zeros(batch_size, 1, dtype=torch.long,device = torch.device(self.args.devices[0])), outs], dim=1)
+        return outs, process_confidence_scores(self, conf_outs.unsqueeze(-1), outs_dummy_modified_tensor)
 
 
 class LSTMDecoder(nn.Module):

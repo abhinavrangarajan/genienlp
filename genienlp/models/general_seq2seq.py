@@ -57,7 +57,7 @@ class Seq2Seq(nn.Module):
         self_attended_context, final_context, context_rnn_state, final_question, question_rnn_state = \
             self.encoder(batch)
 
-        loss, predictions = self.decoder(batch, self_attended_context, final_context, context_rnn_state,
+        loss, predictions, confidence = self.decoder(batch, self_attended_context, final_context, context_rnn_state,
                                          final_question, question_rnn_state)
 
-        return loss, predictions
+        return loss, predictions, confidence 

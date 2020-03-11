@@ -279,6 +279,68 @@ def mask(targets, out, squash=True, pad_idx=1):
     targets_after = targets[mask]
     return out_after, targets_after
 
+def make_confidence(targets, out, confidence, pad_idx=1):
+    confidence = confidence.squeeze(-1)
+    mask = (targets != pad_idx)
+    lengths = torch.sum(mask, -1)
+    res = []
+    exc=0
+    for i, val in enumerate(lengths):
+        try:
+                res += val.item()*[confidence[i].item()]
+        except:
+                res += val.item()*[confidence.item()]
+                exc+=1
+    print(exc)
+    res_tensor = torch.Tensor(res).unsqueeze(-1)
+    if targets.is_cuda:
+        res_tensor = res_tensor.cuda(targets.get_device())
+    return res_tensor
+
+def process_confidence_scores(model, confidence, answer_indices):
+    conf_mode = model.args.confidence_mode
+    pad_idx = model.pad_idx  # model.field.decoder_stoi[model.field.pad_token]
+
+    if conf_mode == 'rnn':
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+        lengths = torch.sum(mask_ans, -1)
+        outputs, (h, c) = model.confidence_encoder(confidence, lengths) # h of shape (num_layers * num_directions, batch, hidden_size)
+        batch = h.size(1)
+        h_flattened = torch.transpose(h, 0, 1).contiguous().view(batch, -1)
+
+        confidence = model.confidence_hidden_projection(h_flattened)
+        confidence = torch.sigmoid(confidence)
+
+
+    elif conf_mode == 'linear':
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        padding_length = model.args.max_answer_length - confidence.size(1)
+        confidence = confidence.squeeze(-1)
+        confidence = F.pad(confidence, (0, padding_length), mode='constant', value=0)
+
+        # do sigmoid before projection (kind of a normalization)
+        confidence = torch.sigmoid(confidence)
+        # confidence of sentence is calculated by passing confidence of tokens through a one layer neural network
+        confidence = model.confidence_projection(confidence)
+        confidence = torch.sigmoid(confidence)
+
+
+    elif conf_mode == 'mean':
+        # print("confidence (before): ", confidence.shape)
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        # print("confidence (after): ", confidence.shape)
+        mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+        lengths = torch.sum(mask_ans, -1)
+        confidence = torch.sigmoid(confidence)
+        confidence = confidence * mask_ans.unsqueeze(-1)
+        # print(torch.mean(confidence,-1))
+        confidence = confidence.squeeze(-1)
+        # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
+        confidence = torch.sum(confidence, -1) / lengths.float()
+        # print("confidence (after after): ", confidence)
+    return confidence
+
 
 class Highway(torch.nn.Module):
     def __init__(self, d_in, activation='relu', n_layers=1):

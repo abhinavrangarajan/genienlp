@@ -284,14 +284,14 @@ def make_confidence(targets, out, confidence, pad_idx=1):
     mask = (targets != pad_idx)
     lengths = torch.sum(mask, -1)
     res = []
-    exc=0
+    #exc=0
     for i, val in enumerate(lengths):
         try:
                 res += val.item()*[confidence[i].item()]
         except:
                 res += val.item()*[confidence.item()]
-                exc+=1
-    print(exc)
+                #exc+=1
+    #print(exc)
     res_tensor = torch.Tensor(res).unsqueeze(-1)
     if targets.is_cuda:
         res_tensor = res_tensor.cuda(targets.get_device())
@@ -312,7 +312,12 @@ def process_confidence_scores(model, confidence, answer_indices):
         confidence = model.confidence_hidden_projection(h_flattened)
         confidence = torch.sigmoid(confidence)
 
-
+    elif conf_mode == 'conv':
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        confidence = model.confidence_projection(confidence.permute(0,2,1))
+        confidence = torch.sigmoid(confidence)
+        confidence = torch.min(confidence, -1)[0]
+    
     elif conf_mode == 'linear':
         confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
         padding_length = model.args.max_answer_length - confidence.size(1)
@@ -339,6 +344,20 @@ def process_confidence_scores(model, confidence, answer_indices):
         # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
         confidence = torch.sum(confidence, -1) / lengths.float()
         # print("confidence (after after): ", confidence)
+    
+    elif conf_mode == 'min':
+        # print("confidence (before): ", confidence.shape)
+        confidence, _ = mask(answer_indices[:, 1:].contiguous(), confidence.contiguous(), squash=False, pad_idx=pad_idx)
+        # print("confidence (after): ", confidence.shape)
+        mask_ans = (answer_indices[:, 1:].contiguous() != pad_idx)
+        lengths = torch.sum(mask_ans, -1)
+        confidence = torch.sigmoid(confidence)
+        confidence = confidence * mask_ans.unsqueeze(-1)
+        # print(torch.mean(confidence,-1))
+        confidence = confidence.squeeze(-1)
+        # confidence of sentence is the mean of confidence of each token (after removing pad tokens)
+        #confidence = torch.sum(confidence, -1) / lengths.float()
+        confidence = torch.min(confidence, -1)[0]
     return confidence
 
 

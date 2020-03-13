@@ -167,7 +167,6 @@ def parse_argv(parser):
 
     parser.add_argument('--confidence_mode', type=str, default='mean', help="how to calculate confidence score for each sentence from its token's scores")
 
-
 def post_parse(args):
     if args.val_task_names is None:
         args.val_task_names = []

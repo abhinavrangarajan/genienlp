@@ -73,8 +73,15 @@ class MQANDecoder(nn.Module):
         self.generative_vocab_size = numericalizer.generative_vocab_size
         self.out = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, self.generative_vocab_size)
 
-        self.confidence = nn.Linear(self.generative_vocab_size, 1)
+        self.confidence1 = nn.Linear(self.generative_vocab_size, 100)
+        self.confidence2 = nn.Linear(100,1,bias=False)
         #self.confidence = nn.Linear(args.rnn_dimension if args.rnn_layers > 0 else args.dimension, 1)
+        if args.confidence_mode == "linear":
+            self.confidence_projection = nn.Linear(self.args.max_answer_length,1,bias=False) 
+        elif args.confidence_mode =="conv":
+            self.confidence_projection = nn.Conv1d(1,1,3,padding=2)
+        else:
+            self.confidence_projection = nn.Linear(50,1,bias=False) 
 
     def set_embeddings(self, embeddings):
         if self.decoder_embeddings is not None:
@@ -163,8 +170,12 @@ class MQANDecoder(nn.Module):
             if self.args.baseline:
                 total_loss = xentropy_loss
             else:
+                print("confidence_loss: ",confidence_loss)
+                #print("xentropy_loss: ",xentropy_loss)
                 total_loss = xentropy_loss + (self.args.lambd * confidence_loss)
-
+                print("Total before: ", total_loss)
+                total_loss += 10 * self.confidence1.weight.norm(2)
+                print("Total after: ", total_loss)
             return total_loss, None, None
 
 
@@ -197,7 +208,9 @@ class MQANDecoder(nn.Module):
         
         size2 = list(scores.size())
         size2[-1] = 1
-        confidence = self.confidence(scores.view(-1, scores.size(-1))).view(size2)
+        confidence_vec = torch.nn.functional.relu(self.confidence1(scores.view(-1, scores.size(-1))))
+        confidence = self.confidence2(confidence_vec).view(size2)
+      
 
         p_vocab = F.softmax(scores, dim=scores.dim() - 1)
         
